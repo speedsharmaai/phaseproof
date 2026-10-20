@@ -133,7 +133,7 @@ No server, no telemetry, nothing collected. See [PRIVACY.md](PRIVACY.md).
 
 ## Status
 
-v0.2.0. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
+v0.2.1. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
 
 ## Related projects
 

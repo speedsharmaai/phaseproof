@@ -6,6 +6,8 @@ argument-hint: "[one-line idea]"
 
 Set up the project in the current directory. Idea from the user: $ARGUMENTS
 
+If the project already has a README and a `phases/` folder, don't rewrite them. Find the first phase that isn't done and start there with `init --phase NN`.
+
 1. Ask the owner, in one round, only what you cannot infer:
    - who it is for and what it does for them
    - the one number that says it worked, with a deadline
@@ -18,7 +20,7 @@ Set up the project in the current directory. Idea from the user: $ARGUMENTS
    - `phases/README.md` from `phases-README.md`, with an honest kill line
    - `docs/decisions/0001-<stack>.md` from `adr.md`
 4. Turn the gate on, passing every check command:
-   `node "${CLAUDE_PLUGIN_ROOT}/scripts/phaseproof.mjs" init --check "<cmd>" --check "<cmd>"`
+   `node "${CLAUDE_PLUGIN_ROOT}/scripts/phaseproof.mjs" init --check "<cmd>" --check "<cmd>"` (add `--phase NN` for an existing project)
 5. Tell the owner in three lines what was written and that the next step is `/phaseproof:phase 01 <name>`.
 
 Write no application code here. The gate blocks it anyway until phase 01 is approved.

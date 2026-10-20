@@ -161,3 +161,12 @@ test('approval records the scope and docs review hashes', (t) => {
   assert.equal(a.scopeHash.length, 64);
   assert.equal(a.docsReview.length, 64);
 });
+
+test('init can start an existing project at a later phase', (t) => {
+  const root = tempProject(t);
+  const r = cli(root, 'init', '--phase', '3', '--check', 'pnpm test');
+  assert.match(r.out, /tracking started at phase 03/);
+  assert.equal(loadState(root).phase, '03');
+  assert.deepEqual(loadConfig(root).checks, ['pnpm test']);
+  assert.equal(cli(tempProject(t), 'init', '--phase', 'x').code, 1);
+});

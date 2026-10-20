@@ -26,7 +26,8 @@ import { parseVerdict } from './lib/verdict.mjs';
 
 const USAGE = `usage: phaseproof <command>
 
-  init [--check "<cmd>"]...   start tracking this project (checks run before every gate)
+  init [--check "<cmd>"]... [--phase NN]
+                              start tracking this project (checks run before every gate)
   status                      current phase and what it is waiting on
   approve <phase>             owner sign-off that opens code for a phase (also clears a block)
   check [phase]               run the configured checks and record the result
@@ -65,11 +66,15 @@ const commands = {
   init(root, args, out) {
     if (isActive(root)) return out('already tracked. Run: phaseproof status');
     const checks = [];
-    for (let i = 0; i < args.length; i++) if (args[i] === '--check' && args[i + 1]) checks.push(args[++i]);
+    let phase = '01';
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--check' && args[i + 1]) checks.push(args[++i]);
+      else if (args[i] === '--phase' && args[i + 1]) phase = padPhase(args[++i]);
+    }
     writeJson(ppPath(root, 'config.json'), { ...loadConfig(root), checks });
-    writeJson(ppPath(root, 'state.json'), { version: 1, phase: '01' });
+    writeJson(ppPath(root, 'state.json'), { version: 1, phase });
     for (const d of ['reviews', 'approvals', 'gates', 'runs', 'blocks']) mkdirSync(ppPath(root, d), { recursive: true });
-    out(`tracking started at phase 01${checks.length ? '' : '. Add your test/typecheck commands to .phaseproof/config.json'}`);
+    out(`tracking started at phase ${phase}${checks.length ? '' : '. Add your test/typecheck commands to .phaseproof/config.json'}`);
   },
 
   status(root, _args, out) {

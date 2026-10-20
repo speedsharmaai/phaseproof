@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 - 2026-10-20
+
+- `init --phase NN` starts an existing project at the phase it is on
+- kickoff adopts a project that already has a README and phases/ instead of rewriting them
+
 ## 0.2.0 - 2026-10-20
 
 - A second failed code review blocks the phase: code closes and the gate refuses until the owner approves again
