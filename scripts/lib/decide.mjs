@@ -1,0 +1,54 @@
+import { existsSync } from 'node:fs';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { approvalFile, gateFile, isActive, loadConfig, loadState } from './project.mjs';
+
+const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+const PROTECTED_IN_BASH = /\.phaseproof[\\/]+(gates|approvals|runs)\b/;
+const APPROVE_IN_BASH = /phaseproof\.mjs["']?\s+approve\b/;
+const WRITABLE_STATE = ['.phaseproof/reviews/', '.phaseproof/config.json'];
+
+const allow = { allow: true };
+const deny = (reason) => ({ allow: false, reason: `phaseproof: ${reason}` });
+
+export function toProjectPath(root, file) {
+  const rel = relative(resolve(root), resolve(root, file));
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
+  return rel.split(sep).join('/');
+}
+
+const isDoc = (rel, docPaths) =>
+  rel.toLowerCase().endsWith('.md') || docPaths.some((p) => rel === p.replace(/\/$/, '') || rel.startsWith(p));
+
+export function decide({ root, toolName, toolInput = {} }) {
+  if (!isActive(root)) return allow;
+
+  if (toolName === 'Bash') {
+    const cmd = String(toolInput.command ?? '');
+    if (PROTECTED_IN_BASH.test(cmd)) return deny('gate, approval and check records are written by the phaseproof script only.');
+    if (APPROVE_IN_BASH.test(cmd)) return deny('approval belongs to the owner. Ask them to run /phaseproof:approve.');
+    return allow;
+  }
+
+  if (!FILE_TOOLS.has(toolName)) return allow;
+  const file = toolInput.file_path ?? toolInput.notebook_path;
+  if (!file) return allow;
+  const rel = toProjectPath(root, String(file));
+  if (!rel) return allow;
+
+  if (rel.startsWith('.phaseproof/')) {
+    if (WRITABLE_STATE.some((p) => rel === p || rel.startsWith(p))) return allow;
+    return deny(`${rel} is written by the phaseproof script, not by hand.`);
+  }
+
+  if (isDoc(rel, loadConfig(root).docPaths)) return allow;
+
+  const phase = loadState(root)?.phase;
+  if (!phase) return deny('.phaseproof/state.json has no current phase. Run /phaseproof:status.');
+  if (!existsSync(approvalFile(root, phase))) {
+    return deny(`phase ${phase} is not approved, so code stays closed. Finish and review the phase docs, then the owner runs /phaseproof:approve ${phase}.`);
+  }
+  if (existsSync(gateFile(root, phase))) {
+    return deny(`phase ${phase} already passed its gate. Plan the next phase and get it approved before more code.`);
+  }
+  return allow;
+}
