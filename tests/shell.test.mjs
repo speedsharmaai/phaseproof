@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describeViolation, dirtyCodeFiles, ownerNotice, snapshot, verify } from '../scripts/lib/shell.mjs';
@@ -112,7 +112,7 @@ test('commits made by the shell are reported, including the first commit', (t) =
     git(root, 'commit', '-qam', 'sneaky');
   });
   assert.deepEqual(r.committed, ['src/a.js']);
-  assert.match(describeViolation('phase 01 is not approved', r), /moved HEAD, and the new commits change code: src\/a\.js/);
+  assert.match(describeViolation('phase 01 is not approved', r), /HEAD moved during that command .* differs from before: src\/a\.js/);
 
   const fresh = tempProject(t);
   git(fresh, 'init', '-q');
@@ -138,7 +138,7 @@ test('many dirty files fall back to size and mtime', (t) => {
   const started = Date.now();
   const r = changedBy(root, 'p1', () => put(root, 'gen/f7.js', 'changed and longer\n'));
   assert.deepEqual(r.changed, ['gen/f7.js']);
-  assert.ok(Date.now() - started < 20000);
+  assert.ok(Date.now() - started < 8000);
 });
 
 test('background commands are not snapshotted; corrupt snapshots are dropped', (t) => {
@@ -198,4 +198,54 @@ test('undoing a change back to the committed version is not reported', (t) => {
   put(root, 'src/a.js', 'by shell\n');
   assert.equal(changedBy(root, 'u1', () => git(root, 'checkout', '--', 'src/a.js')), null);
   assert.equal(read(root, 'src/a.js'), 'original\n');
+});
+
+test('a symlinked snapshot folder or gitignore turns the guard off instead of writing through it', { skip: process.platform === 'win32' }, (t) => {
+  const root = closedRepo(t);
+  put(root, '.env', 'SECRET=1\n');
+  const old = new Date(Date.now() - 48 * 3600 * 1000);
+  for (const f of ['.env', 'README.md', 'src/a.js']) utimesSync(join(root, f), old, old);
+  rmSync(join(root, '.phaseproof/shell'), { recursive: true, force: true });
+  symlinkSync('..', join(root, '.phaseproof/shell'));
+  assert.equal(snapshot(root, 'x1'), false);
+  assert.equal(verify(root, 'x1'), null);
+  for (const f of ['.env', 'README.md', 'src/a.js']) assert.equal(existsSync(join(root, f)), true, f);
+
+  const other = closedRepo(t);
+  put(other, 'src/conf.txt', 'conf\n');
+  rmSync(join(other, '.phaseproof/.gitignore'));
+  symlinkSync('../src/conf.txt', join(other, '.phaseproof/.gitignore'));
+  assert.equal(snapshot(other, 'x2'), false);
+  assert.equal(read(other, 'src/conf.txt'), 'conf\n');
+});
+
+test('prune only removes its own old snapshot files', (t) => {
+  const root = closedRepo(t);
+  mkdirSync(join(root, '.phaseproof/shell'), { recursive: true });
+  put(root, '.phaseproof/shell/old.json', '{}');
+  put(root, '.phaseproof/shell/keep-me.txt', 'not ours');
+  put(root, '.phaseproof/shell/fresh.json', '{}');
+  const old = new Date(Date.now() - 48 * 3600 * 1000);
+  utimesSync(join(root, '.phaseproof/shell/old.json'), old, old);
+  utimesSync(join(root, '.phaseproof/shell/keep-me.txt'), old, old);
+  snapshot(root, 'pr1');
+  const left = readdirSync(join(root, '.phaseproof/shell')).sort();
+  assert.deepEqual(left, ['fresh.json', 'keep-me.txt', 'pr1.json']);
+});
+
+test('the message protects uncommitted work from a blanket undo', (t) => {
+  const root = closedRepo(t);
+  put(root, 'src/mine.js', 'tracked\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'mine');
+  put(root, 'src/mine.js', 'owner work in progress\n');
+  const r = changedBy(root, 'w1', () => {
+    put(root, 'src/mine.js', 'owner work in progress\nshell line\n');
+    put(root, 'src/a.js', 'by shell\n');
+  });
+  assert.deepEqual(r.hadWork, ['src/mine.js']);
+  const m = describeViolation('closed', r);
+  assert.match(m, /src\/a\.js had no uncommitted changes before the command/);
+  assert.match(m, /src\/mine\.js already had the owner's uncommitted work before the command\. Do not run git checkout, restore, reset, stash or clean/);
+  assert.match(m, /If you did not make a change, leave it alone/);
 });

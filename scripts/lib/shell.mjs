@@ -6,11 +6,39 @@ import { loadConfig, ppPath, readJson, sha256 } from './project.mjs';
 
 const MAX_HASHED_BYTES = 1024 * 1024;
 const MAX_HASHED_FILES = 2000;
+const MAX_HASHED_TOTAL = 64 * 1024 * 1024;
+const OWN_FILE = /^[\w.-]+\.json(\.tmp)?$/;
 const SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
-const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
-const git = (cwd, args) =>
-  spawnSync('git', ['--no-optional-locks', '--literal-pathspecs', ...args], { cwd, encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 });
+const git = (cwd, args, input) =>
+  spawnSync('git', ['--no-optional-locks', '--literal-pathspecs', ...args], { cwd, input, encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 });
+
+const isRealDir = (path) => {
+  try {
+    const st = lstatSync(path);
+    return st.isDirectory() && !st.isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+
+const isLink = (path) => {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+
+export function storageSafe(root) {
+  const base = ppPath(root);
+  if (!isRealDir(base)) return false;
+  const dir = snapshotDir(root);
+  if (existsSync(dir) || isLink(dir)) {
+    if (!isRealDir(dir)) return false;
+  }
+  return !isLink(ppPath(root, '.gitignore'));
+}
 
 const snapshotDir = (root) => ppPath(root, 'shell');
 const snapshotFile = (root, id) => join(snapshotDir(root), `${String(id).replace(/[^\w.-]/g, '_')}.json`);
@@ -51,7 +79,7 @@ export function dirtyCodeFiles(root) {
   return state ? changedPaths(root, state, loadConfig(root).docPaths) : null;
 }
 
-function describe(root, rel, hash) {
+function describe(root, rel, budget) {
   let st;
   try {
     st = lstatSync(join(root, rel));
@@ -60,8 +88,9 @@ function describe(root, rel, hash) {
   }
   if (st.isSymbolicLink()) return { rel, kind: 'link', target: readlinkSync(join(root, rel)) };
   if (!st.isFile()) return { rel, kind: 'other' };
-  if (!hash || st.size > MAX_HASHED_BYTES) return { rel, kind: 'file', size: st.size, mtime: st.mtimeMs };
+  if (!budget || st.size > MAX_HASHED_BYTES || budget.left < st.size) return { rel, kind: 'file', size: st.size, mtime: st.mtimeMs };
   try {
+    budget.left -= st.size;
     return { rel, kind: 'file', hash: sha256(readFileSync(join(root, rel))) };
   } catch {
     return { rel, kind: 'file', size: st.size, mtime: st.mtimeMs };
@@ -77,10 +106,12 @@ const same = (a, b) => {
 };
 
 function prune(dir) {
-  if (!existsSync(dir)) return;
+  if (!isRealDir(dir)) return;
   for (const name of readdirSync(dir)) {
+    if (!OWN_FILE.test(name)) continue;
     try {
-      if (Date.now() - statSync(join(dir, name)).mtimeMs > SNAPSHOT_TTL_MS) rmSync(join(dir, name), { force: true });
+      const st = lstatSync(join(dir, name));
+      if (st.isFile() && Date.now() - st.mtimeMs > SNAPSHOT_TTL_MS) rmSync(join(dir, name), { force: true });
     } catch {}
   }
 }
@@ -96,7 +127,7 @@ function ensureIgnored(root) {
 }
 
 export function snapshot(root, id, { background = false } = {}) {
-  if (!id || background) return false;
+  if (!id || background || !storageSafe(root)) return false;
   const state = repoState(root);
   if (!state) return false;
   const { docPaths } = loadConfig(root);
@@ -106,22 +137,32 @@ export function snapshot(root, id, { background = false } = {}) {
   ensureIgnored(root);
   prune(snapshotDir(root));
   const hash = paths.length <= MAX_HASHED_FILES;
-  const entries = paths.map((rel) => describe(root, rel, hash));
+  const budget = hash ? { left: MAX_HASHED_TOTAL } : null;
+  const entries = paths.map((rel) => describe(root, rel, budget));
   const file = snapshotFile(root, id);
   writeFileSync(`${file}.tmp`, JSON.stringify({ at: new Date().toISOString(), head: state.head, docPaths, hash, entries }));
   renameSync(`${file}.tmp`, file);
   return true;
 }
 
+function emptyTree(root) {
+  const r = git(root, ['hash-object', '-t', 'tree', '--stdin'], Buffer.alloc(0));
+  return r.status === 0 ? r.stdout.toString('utf8').trim() : null;
+}
+
 function committedCode(root, state, docPaths, from) {
   if (!state.head) return [];
-  const r = git(state.top, ['diff', '--name-only', '-z', from ?? EMPTY_TREE, state.head]);
+  const base = from ?? emptyTree(root);
+  if (!base) return [];
+  const r = git(state.top, ['diff', '--name-only', '-z', base, state.head]);
   if (r.status !== 0) return [];
   return toCode(state, docPaths, r.stdout.toString('utf8').split('\0').filter(Boolean));
 }
 
 export function verify(root, id) {
+  if (!storageSafe(root)) return null;
   const file = snapshotFile(root, id);
+  if (isLink(file)) return null;
   const snap = readJson(file, null);
   rmSync(file, { force: true });
   if (!snap || !Array.isArray(snap.entries)) return null;
@@ -132,23 +173,29 @@ export function verify(root, id) {
   const committed = snap.head !== state.head ? committedCode(root, state, docPaths, snap.head) : [];
   const paths = changedPaths(root, state, docPaths) ?? [];
   const before = new Map(snap.entries.map((e) => [e.rel, e]));
-  const changed = [...paths]
-    .sort()
-    .filter((rel) => {
-      const prev = before.get(rel);
-      return !prev || !same(prev, describe(root, rel, snap.hash !== false));
-    });
+  const budget = snap.hash !== false ? { left: MAX_HASHED_TOTAL } : null;
+  const changed = [...paths].sort().filter((rel) => {
+    const prev = before.get(rel);
+    return !prev || !same(prev, describe(root, rel, prev?.hash !== undefined ? budget : null));
+  });
   if (!changed.length && !committed.length) return null;
-  return { changed, committed, headMoved: snap.head !== state.head };
+  const hadWork = changed.filter((rel) => before.has(rel));
+  return { changed, committed, hadWork, headMoved: snap.head !== state.head };
 }
 
 const list = (files) => files.slice(0, 10).join(', ') + (files.length > 10 ? ` and ${files.length - 10} more` : '');
 
 export function describeViolation(phaseReason, result) {
+  const hadWork = result.hadWork ?? [];
+  const fresh = result.changed.filter((rel) => !hadWork.includes(rel));
   const lines = [];
   if (result.changed.length) lines.push(`phaseproof: code changed during that shell command while code is closed: ${list(result.changed)}.`);
-  if (result.committed.length) lines.push(`${lines.length ? 'It' : 'phaseproof: that shell command'} also moved HEAD, and the new commits change code: ${list(result.committed)}.`);
-  lines.push('phaseproof did not touch any file. Undo these changes, or stop and tell the owner why they are needed.');
+  if (result.committed.length) lines.push(`phaseproof: HEAD moved during that command (commit, reset or checkout), and the code it points to differs from before: ${list(result.committed)}.`);
+  lines.push('phaseproof did not touch any file.');
+  if (fresh.length) lines.push(`If you made these changes, undo them: ${list(fresh)} had no uncommitted changes before the command, so restore them from git or delete files you created.`);
+  if (hadWork.length) lines.push(`${list(hadWork)} already had the owner's uncommitted work before the command. Do not run git checkout, restore, reset, stash or clean on them; revert only the lines you changed, or ask the owner.`);
+  if (result.committed.length) lines.push('Do not rewrite history to undo the commit; tell the owner.');
+  lines.push('If you did not make a change, leave it alone and tell the owner.');
   lines.push(`Why code is closed: ${phaseReason.replace(/^phaseproof: /, '')}`);
   return lines.join(' ');
 }

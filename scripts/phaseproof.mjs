@@ -74,7 +74,7 @@ const commands = {
     writeJson(ppPath(root, 'config.json'), { ...loadConfig(root), checks });
     writeJson(ppPath(root, 'state.json'), { version: 1, phase });
     for (const d of ['reviews', 'approvals', 'gates', 'runs', 'blocks']) mkdirSync(ppPath(root, d), { recursive: true });
-    writeFileSync(ppPath(root, '.gitignore'), 'shell/\n');
+    if (!existsSync(ppPath(root, '.gitignore'))) writeFileSync(ppPath(root, '.gitignore'), 'shell/\n');
     out(`tracking started at phase ${phase}${checks.length ? '' : '. Add your test/typecheck commands to .phaseproof/config.json'}`);
   },
 
