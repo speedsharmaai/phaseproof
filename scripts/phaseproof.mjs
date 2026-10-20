@@ -162,6 +162,10 @@ const commands = {
     if (tests?.unverifiable) {
       refuse(`the approval's base commit ${tests.unverifiable.slice(0, 12)} is gone (rebase or gc), so tests can't be compared. The owner runs /phaseproof:approve ${phase} --new-base after checking the tests by hand.`);
     }
+    if (tests?.unchecked) {
+      refuse(`deleted tests could not be checked: ${tests.unchecked}. The gate stays open; run git status to see why.`);
+    }
+    if (approval.base === null) out('note: this phase was approved before the repository had any history, so deleted tests were not checked.');
     if (tests?.removed.length) {
       refuse(`test files were deleted since approval, gate stays open:\n  ${tests.removed.join('\n  ')}\nRestore them. If the owner wants them gone, they list them in scope.md under **Removes tests:** and approve again; do not edit scope.md for this yourself.`);
     }

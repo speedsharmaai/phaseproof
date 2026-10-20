@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -56,7 +56,7 @@ const DIFF = ['--no-ext-diff', '--no-color', '--src-prefix=a/', '--dst-prefix=b/
 const git = (root, args, index) =>
   spawnSync(
     'git',
-    ['--no-optional-locks', '--literal-pathspecs', '-c', 'core.quotePath=false', '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', ...args],
+    ['--no-optional-locks', '--literal-pathspecs', '-c', 'core.quotePath=false', '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', '-c', 'diff.renameLimit=0', ...args],
     { cwd: root, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, env: index ? { ...process.env, GIT_INDEX_FILE: index } : undefined },
   );
 
@@ -82,20 +82,36 @@ function allowed(list) {
   return (path) => items.some((item) => path === item || (item.endsWith('/') && path.startsWith(item)));
 }
 
-function withWorktreeIndex(root, fn) {
+const zlist = (r) => (r.status === 0 ? r.stdout.split('\0').filter(Boolean) : null);
+
+function candidates(root, base, order) {
+  const inBase = zlist(git(root, ['ls-tree', '-r', '--name-only', '-z', base, '--', '.']));
+  const untracked = zlist(git(root, ['ls-files', '--others', '--exclude-standard', '-z']));
+  const changed = zlist(git(root, ['diff', ...DIFF, order, '--name-only', '-z', base]));
+  if (!inBase || !untracked || !changed) return null;
+  const gone = inBase.filter((p) => isTestFile(p) && !existsSync(join(root, p)));
+  return [...new Set([...gone, ...untracked.filter(watched), ...changed.filter(watched)])];
+}
+
+function withScratch(fn) {
   const dir = mkdtempSync(join(tmpdir(), 'phaseproof-'));
-  const index = join(dir, 'index');
+  const order = join(dir, 'order');
+  writeFileSync(order, '');
   try {
-    if (git(root, ['read-tree', 'HEAD'], index).status !== 0 && git(root, ['read-tree', '--empty'], index).status !== 0) return null;
-    if (git(root, ['add', '-A', '--', '.'], index).status !== 0) return null;
-    return fn(index);
+    return fn(join(dir, 'index'), `-O${order}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-function changesSince(root, base, index) {
-  const names = git(root, ['diff', ...DIFF, '--cached', '--name-status', '-M75%', '-z', base], index);
+function buildTestIndex(root, paths, index) {
+  if (git(root, ['read-tree', 'HEAD'], index).status !== 0 && git(root, ['read-tree', '--empty'], index).status !== 0) return false;
+  for (let i = 0; i < paths.length; i += 200) git(root, ['add', '-A', '--ignore-errors', '--', ...paths.slice(i, i + 200)], index);
+  return true;
+}
+
+function changesSince(root, base, index, order, paths) {
+  const names = git(root, ['diff', ...DIFF, order, '--cached', '--name-status', '-M75%', '-z', base, '--', ...paths], index);
   if (names.status !== 0) return null;
   const parts = names.stdout.split('\0').filter(Boolean);
   const out = { deleted: [], touched: [] };
@@ -116,9 +132,9 @@ function changesSince(root, base, index) {
   return out;
 }
 
-function skipsInDiff(root, base, touched, index) {
+function skipsInDiff(root, base, touched, index, order) {
   if (!touched.length) return { skipped: [], failed: false };
-  const diff = git(root, ['diff', ...DIFF, '--cached', '-M75%', '-U0', base, '--', ...new Set(touched)], index);
+  const diff = git(root, ['diff', ...DIFF, order, '--cached', '-M75%', '-U0', base, '--', ...new Set(touched)], index);
   if (diff.status !== 0) return { skipped: [], failed: true };
   const skipped = [];
   let file = null;
@@ -134,13 +150,15 @@ export function testTampering(root, base, allowList = '') {
   if (git(root, ['rev-parse', '--git-dir']).status !== 0) return null;
   if (git(root, ['cat-file', '-e', `${base}^{commit}`]).status !== 0) return { unverifiable: base };
   const ok = allowed(allowList);
-  const result = withWorktreeIndex(root, (index) => {
-    const changes = changesSince(root, base, index);
-    if (!changes) return null;
-    return { removed: changes.deleted.filter((p) => !ok(p)), ...skipsInDiff(root, base, changes.touched, index) };
+  return withScratch((index, order) => {
+    const paths = candidates(root, base, order);
+    if (!paths) return { unchecked: 'git could not list the files that changed since approval' };
+    if (!paths.length) return null;
+    if (!buildTestIndex(root, paths, index)) return { unchecked: 'git could not build a scratch index for the test files' };
+    const changes = changesSince(root, base, index, order, paths);
+    if (!changes) return { unchecked: 'git could not compare the test files with the approval base' };
+    const removed = changes.deleted.filter((p) => !ok(p));
+    const { skipped, failed } = skipsInDiff(root, base, changes.touched, index, order);
+    return removed.length || skipped.length || failed ? { removed, skipped, incomplete: failed } : null;
   });
-  if (!result) return { removed: [], skipped: [], incomplete: true };
-  return result.removed.length || result.skipped.length || result.failed
-    ? { removed: result.removed, skipped: result.skipped, incomplete: result.failed }
-    : null;
 }

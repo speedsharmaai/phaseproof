@@ -43,21 +43,39 @@ export function readText(file) {
 export const loadConfig = (root) => ({ ...DEFAULT_CONFIG, ...readJson(ppPath(root, 'config.json'), {}) });
 export const loadState = (root) => readJson(ppPath(root, 'state.json'), null);
 
+const isDir = (path) => {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
 export function phaseDirs(root, phase) {
   const base = join(root, 'phases');
-  if (!existsSync(base)) return [];
+  if (!isDir(base)) return [];
   return readdirSync(base)
     .sort()
     .filter((n) => n === `phase-${phase}` || n.startsWith(`phase-${phase}-`))
     .map((n) => join(base, n))
-    .filter((p) => statSync(p, { throwIfNoEntry: false })?.isDirectory() === true);
+    .filter(isDir);
 }
 
 export function phaseDir(root, phase) {
   return phaseDirs(root, phase)[0] ?? null;
 }
 
-const visibleText = (md) => md.replace(/```[\s\S]*?```/g, '').replace(/<!--[\s\S]*?-->/g, '');
+const visibleText = (md) => md.replace(/\r/g, '').replace(/```[\s\S]*?```/g, '').replace(/<!--[\s\S]*?-->/g, '');
+
+const BULLET = /^\s*(?:[-*+]|\d+[.)])\s+/;
+const cleanPath = (v) =>
+  v
+    .trim()
+    .replace(/^`|`$/g, '')
+    .replace(/\s+\(.*\)$/, '')
+    .replace(/^`|`$/g, '')
+    .replace(/^\.\//, '')
+    .trim();
 
 export function scopeList(text, name) {
   const out = [];
@@ -67,9 +85,11 @@ export function scopeList(text, name) {
     const m = head.exec(lines[i]);
     if (!m) continue;
     out.push(...m[1].split(','));
-    for (let j = i + 1; j < lines.length && /^\s*[-*]\s+/.test(lines[j]); j++) out.push(lines[j].replace(/^\s*[-*]\s+/, ''));
+    let j = i + 1;
+    while (j < lines.length && !lines[j].trim()) j++;
+    for (; j < lines.length && BULLET.test(lines[j]); j++) out.push(lines[j].replace(BULLET, ''));
   }
-  return out.map((v) => v.trim().replace(/^`|`$/g, '')).filter((v) => v && v.toLowerCase() !== 'none');
+  return out.map(cleanPath).filter((v) => v && v.toLowerCase() !== 'none');
 }
 
 export function scopeField(text, name) {

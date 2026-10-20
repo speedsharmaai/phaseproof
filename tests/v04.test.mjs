@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, renameSync, rmSync, symlinkSync } from 'node:fs';
+import { chmodSync, existsSync, renameSync, rmSync, symlinkSync } from 'node:fs';
 import { decide } from '../scripts/lib/decide.mjs';
 import { join } from 'node:path';
-import { approvalFile, gateFile, readJson, scopeField } from '../scripts/lib/project.mjs';
+import { approvalFile, gateFile, readJson, scopeField, scopeList } from '../scripts/lib/project.mjs';
 import { isSkipLine, isTestFile, testTampering } from '../scripts/lib/tests-guard.mjs';
 import { context, respond } from '../scripts/session.mjs';
 import { cli, PASS, put, tempProject } from './helpers.mjs';
@@ -299,4 +299,50 @@ test('a dangling symlink in phases/ neither crashes nor reopens code', { skip: p
   const d = decide({ root, toolName: 'Write', toolInput: { file_path: join(root, 'src/x.js') } });
   assert.equal(d.allow, false);
   assert.match(context(root), /Code is closed/);
+});
+
+const countObjects = (root) => git(root, 'count-objects', '-v').stdout;
+
+test('git trouble elsewhere in the tree cannot hide a deleted test', { skip: process.platform === 'win32' }, (t) => {
+  const root = project(t);
+  const head = git(root, 'rev-parse', 'HEAD').stdout.trim();
+  rmSync(join(root, 'src/b.test.js'));
+  put(root, 'locked.txt', 'secret');
+  chmodSync(join(root, 'locked.txt'), 0o000);
+  put(root, 'tool/README', 'x');
+  git(join(root, 'tool'), 'init', '-q');
+  git(root, 'config', 'diff.orderFile', '/nope');
+  git(root, 'config', 'diff.renameLimit', '1');
+  const result = testTampering(root, head);
+  chmodSync(join(root, 'locked.txt'), 0o600);
+  assert.deepEqual(result.removed, ['src/b.test.js']);
+});
+
+test('big non-test files are never copied into the object store', (t) => {
+  const root = project(t);
+  const head = git(root, 'rev-parse', 'HEAD').stdout.trim();
+  put(root, 'data/big.bin', Buffer.alloc(3 * 1024 * 1024, 7));
+  const before = countObjects(root);
+  testTampering(root, head);
+  assert.equal(countObjects(root), before);
+});
+
+test('a looping symlink in phases/ neither crashes nor reopens code', { skip: process.platform === 'win32' }, (t) => {
+  const root = project(t);
+  put(root, '.phaseproof/reviews/phase-01-docs.md', PASS);
+  cli(root, 'approve');
+  put(root, 'phases/phase-01-typo/scope.md', `${SCOPE}\nmore\n`);
+  symlinkSync('phase-01-zz', join(root, 'phases/phase-01-zz'));
+  assert.match(cli(root, 'status').out, /stale/);
+  assert.equal(decide({ root, toolName: 'Write', toolInput: { file_path: join(root, 'src/x.js') } }).allow, false);
+});
+
+test('Removes tests accepts the usual markdown shapes', () => {
+  const list = (text) => scopeList(text, 'Removes tests');
+  assert.deepEqual(list('**Removes tests:**\n\n- tests/a.py\n- tests/b.py\n'), ['tests/a.py', 'tests/b.py']);
+  assert.deepEqual(list('**Removes tests:** tests/a.py\r\n'), ['tests/a.py']);
+  assert.deepEqual(list('**Removes tests:**\r\n- tests/a.py\r\n'), ['tests/a.py']);
+  assert.deepEqual(list('**Removes tests:**\n1. tests/a.py\n+ tests/b.py\n'), ['tests/a.py', 'tests/b.py']);
+  assert.deepEqual(list('**Removes tests:** ./tests/a.py (old suite), `tests/b.py`\n'), ['tests/a.py', 'tests/b.py']);
+  assert.deepEqual(list('**Removes tests:** none\n'), []);
 });
