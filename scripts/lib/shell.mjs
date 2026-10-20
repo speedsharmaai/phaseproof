@@ -141,10 +141,25 @@ function emptyTree(root) {
   return r.status === 0 ? r.stdout.toString('utf8').trim() : null;
 }
 
-function headBlobHash(root, state, rel) {
-  if (!state.head) return null;
-  const r = git(state.top, ['cat-file', 'blob', `${state.head}:${state.prefix}${rel}`]);
-  return r.status === 0 ? sha256(r.stdout) : null;
+function headBlobHashes(state, rels) {
+  const out = new Map();
+  if (!state.head || !rels.length) return out;
+  const input = rels.map((rel) => `${state.head}:${state.prefix}${rel}`).join('\n') + '\n';
+  const r = git(state.top, ['cat-file', '--batch'], Buffer.from(input));
+  if (r.status !== 0) return out;
+  const buf = r.stdout;
+  let at = 0;
+  for (const rel of rels) {
+    const nl = buf.indexOf(0x0a, at);
+    if (nl < 0) break;
+    const header = buf.subarray(at, nl).toString('utf8').split(' ');
+    at = nl + 1;
+    if (header[1] !== 'blob') continue;
+    const size = Number(header[2]);
+    out.set(rel, sha256(buf.subarray(at, at + size)));
+    at += size + 1;
+  }
+  return out;
 }
 
 function committedCode(root, state, docPaths, from) {
@@ -162,8 +177,14 @@ export function verify(root, id) {
   const file = snapshotFile(dir, root, id);
   if (isLink(file)) return null;
   const snap = readJson(file, null);
-  rmSync(file, { force: true });
-  if (!snap || !Array.isArray(snap.entries)) return null;
+  try {
+    return snap && Array.isArray(snap.entries) ? compare(root, snap) : null;
+  } finally {
+    rmSync(file, { force: true });
+  }
+}
+
+function compare(root, snap) {
   const state = repoState(root);
   if (!state) return null;
   const docPaths = Array.isArray(snap.docPaths) ? snap.docPaths : loadConfig(root).docPaths;
@@ -177,17 +198,15 @@ export function verify(root, id) {
     return !prev || !same(prev, describe(root, rel, prev?.hash !== undefined ? budget : null));
   });
   const now = new Set(paths);
-  const discarded = [...before.keys()]
-    .filter((rel) => !now.has(rel))
-    .filter((rel) => {
-      const prev = before.get(rel);
-      if (same(prev, describe(root, rel, prev.hash !== undefined ? { left: MAX_HASHED_TOTAL } : null))) return false;
-      return !(prev.hash !== undefined && headBlobHash(root, state, rel) === prev.hash);
-    })
-    .sort();
+  const gone = [...before.keys()].filter((rel) => {
+    const prev = before.get(rel);
+    return !now.has(rel) && !same(prev, describe(root, rel, prev.hash !== undefined ? { left: MAX_HASHED_TOTAL } : null));
+  });
+  const inHead = headBlobHashes(state, gone.filter((rel) => before.get(rel).hash !== undefined));
+  const discarded = gone.filter((rel) => inHead.get(rel) !== before.get(rel).hash).sort();
   const overwritten = changed.filter((rel) => before.has(rel));
   if (!changed.length && !committed.length && !discarded.length) return null;
-  return { changed, committed, discarded, overwritten, headMoved: snap.head !== state.head };
+  return { changed, committed, discarded, overwritten };
 }
 
 const list = (files) => files.slice(0, 10).join(', ') + (files.length > 10 ? ` and ${files.length - 10} more` : '');

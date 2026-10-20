@@ -122,4 +122,3 @@ test('bash cannot touch block records', (t) => {
   assert.equal(bash(root, 'rm .phaseproof/blocks/phase-01.json').allow, false);
   assert.equal(bash(root, 'node /p/scripts/phaseproof.mjs block').allow, true);
 });
-

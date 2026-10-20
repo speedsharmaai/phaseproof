@@ -337,3 +337,38 @@ test('when the command deletes .phaseproof the reason says the phase was closed'
   put(root, 'src/a.js', 'changed\n');
   assert.match(JSON.parse(post(id, root)).reason, /Code is closed because the phase was closed when the command started\./);
 });
+
+test('a forced checkout over owner work reports it wiped, unless the target branch holds that exact work', (t) => {
+  const root = closedRepo(t);
+  const base = git(root, 'rev-parse', '--abbrev-ref', 'HEAD').stdout.trim();
+  git(root, 'checkout', '-qb', 'other');
+  put(root, 'src/a.js', 'OWNER WORK\n');
+  git(root, 'commit', '-qam', 'other has it');
+  git(root, 'checkout', '-q', base);
+  git(root, 'checkout', '-qb', 'third');
+  put(root, 'src/a.js', 'third\n');
+  git(root, 'commit', '-qam', 'third');
+  git(root, 'checkout', '-q', base);
+  put(root, 'src/a.js', 'OWNER WORK\n');
+  const kept = changedBy(root, 'cf1', () => git(root, 'checkout', '-qf', 'other'));
+  assert.deepEqual(kept.discarded, []);
+  assert.deepEqual(kept.committed, ['src/a.js']);
+  assert.match(ownerNotice(kept), /moved HEAD, so the committed code in src\/a\.js is different/);
+
+  put(root, 'src/a.js', 'MORE OWNER WORK\n');
+  const lost = changedBy(root, 'cf2', () => git(root, 'checkout', '-qf', 'third'));
+  assert.deepEqual(lost.discarded, ['src/a.js']);
+  assert.match(ownerNotice(lost), /wiped your uncommitted changes in src\/a\.js; moved HEAD/);
+});
+
+test('mass wipes are checked against HEAD in one pass', (t) => {
+  const root = closedRepo(t);
+  for (let i = 0; i < 600; i++) put(root, `src/g${i}.js`, `${i}\n`);
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'many');
+  for (let i = 0; i < 600; i++) put(root, `src/g${i}.js`, `owner ${i}\n`);
+  const started = Date.now();
+  const r = changedBy(root, 'mw1', () => git(root, 'reset', '-q', '--hard'));
+  assert.equal(r.discarded.length, 600);
+  assert.ok(Date.now() - started < 8000, `${Date.now() - started} ms`);
+});
