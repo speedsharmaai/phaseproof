@@ -81,12 +81,13 @@ To run an agent on a different model, copy its file from `agents/` into `~/.clau
 When `.phaseproof/state.json` exists in a project, a `PreToolUse` hook:
 
 - blocks `Write`, `Edit`, `MultiEdit` and `NotebookEdit` on code until the current phase is approved, and again after its gate passes
-- refuses to close a phase when test files were deleted since approval (renames don't count), unless scope.md lists them under **Removes tests:** (comma-separated; a path ending in `/` covers a folder). Newly added skip or focus markers (`.skip`, `.only`, `xit`, `@pytest.mark.skip`, `#[ignore]` and similar) are printed as warnings for you and the code reviewer; a pattern list can never be complete, so they warn rather than block
 - closes code again when `scope.md`, `tasks.md` or `screens.md` change after approval; re-approving a full phase then needs a fresh docs review. Only the owner makes a phase quick, with `approve --quick`; nothing in scope.md can. Each phase number may have one folder
 - closes code when a phase is blocked after two failed code reviews, until the owner approves it again
 - always allows Markdown, `docs/`, `phases/` and `design/`
 - blocks writes to `.phaseproof/gates`, `approvals`, `runs` and `blocks`, by file tools or by Bash, and blocks running `approve` from Bash
 - catches shell writes: while code is closed, a `PreToolUse` hook records `git status` before every Bash call and `PostToolUse` / `PostToolUseFailure` hooks compare it after. If the command changed, committed or wiped code (including your own uncommitted changes), Claude is told which files and asked to stop and wait for you, and you get a notice too. phaseproof itself never modifies or deletes a file, and never tells Claude to run a destructive fix
+
+The gate script also refuses to close a phase when test files were deleted since the first approval, unless scope.md lists them under **Removes tests:** (comma-separated or as a bullet list; a path ending in `/` covers a folder). git decides what counts as a rename. Newly added skip or focus markers (`.skip`, `.only`, `xit`, `@pytest.mark.skip`, `#[ignore]` and similar) are printed as warnings for you to check; a pattern list can never be complete, so they warn rather than block.
 
 At the start of every session, and after `/compact`, `/clear` or a resume, a `SessionStart` hook puts the current phase, its Goal and Done when, and whether code is open back into Claude's context, so a long session does not drift off the plan.
 
@@ -129,6 +130,7 @@ Commit `.phaseproof/` with the code. The approvals and gates are the audit trail
 - `scripts/session.mjs` runs at session start and after compact, clear or resume. It reads `.phaseproof/` and `phases/` and prints a short status for Claude; it writes nothing.
 - The hook runs `node ${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs` before file edits and Bash calls. It reads files under `.phaseproof/` in your project and prints an allow or deny decision. It makes no network calls.
 - While code is closed, `scripts/hook.mjs` and `scripts/post.mjs` run `git status`, `git rev-parse` and `git diff --name-only` around Bash calls to find shell writes to code. They write only short-lived records to `phaseproof/` inside the git directory (`.git/phaseproof/`, or the worktree's or submodule's own git dir), holding paths, sizes and hashes but no file contents, and never change your files.
+- At gate time the test guard copies your working tree into a throwaway git index in the OS temp folder (`git read-tree` and `git add -A` with `GIT_INDEX_FILE`) so git can tell renames from deletions. Your real index and files are untouched; git may add loose objects to `.git/objects`, which `git gc` cleans up.
 - `scripts/phaseproof.mjs` reads and writes files under `.phaseproof/`, and runs `git rev-parse HEAD` to record the commit.
 - `check` and `gate` run the commands you list in `.phaseproof/config.json` (your tests, typecheck, lint) through your shell, in your project directory. Nothing else is executed.
 - No telemetry, no data leaves your machine, no packages are downloaded. The researcher and ship-verifier agents use Claude's own WebSearch and WebFetch tools when a skill asks them to.

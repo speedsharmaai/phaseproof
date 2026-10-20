@@ -20,7 +20,7 @@ import {
   runFile,
   scopeChanged,
   scopeHash,
-  scopeField,
+  scopeList,
   scopeText,
   sha256,
   writeJson,
@@ -51,10 +51,7 @@ function requireOneFolder(root, phase) {
   return dirs[0] ?? null;
 }
 
-const removalAllowance = (root, phase) => {
-  const v = scopeField(scopeText(root, phase), 'Removes tests');
-  return v && v.toLowerCase() !== 'none' ? v : '';
-};
+const removalAllowance = (root, phase) => scopeList(scopeText(root, phase), 'Removes tests').join(', ');
 
 function requireActive(root) {
   if (!isActive(root)) refuse('this project is not tracked yet. Run: phaseproof init');

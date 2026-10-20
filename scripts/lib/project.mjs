@@ -50,7 +50,7 @@ export function phaseDirs(root, phase) {
     .sort()
     .filter((n) => n === `phase-${phase}` || n.startsWith(`phase-${phase}-`))
     .map((n) => join(base, n))
-    .filter((p) => statSync(p).isDirectory());
+    .filter((p) => statSync(p, { throwIfNoEntry: false })?.isDirectory() === true);
 }
 
 export function phaseDir(root, phase) {
@@ -58,6 +58,19 @@ export function phaseDir(root, phase) {
 }
 
 const visibleText = (md) => md.replace(/```[\s\S]*?```/g, '').replace(/<!--[\s\S]*?-->/g, '');
+
+export function scopeList(text, name) {
+  const out = [];
+  const lines = visibleText(text ?? '').split('\n');
+  const head = new RegExp(`^\\*\\*${name}:\\*\\*[ \\t]*(.*)$`);
+  for (let i = 0; i < lines.length; i++) {
+    const m = head.exec(lines[i]);
+    if (!m) continue;
+    out.push(...m[1].split(','));
+    for (let j = i + 1; j < lines.length && /^\s*[-*]\s+/.test(lines[j]); j++) out.push(lines[j].replace(/^\s*[-*]\s+/, ''));
+  }
+  return out.map((v) => v.trim().replace(/^`|`$/g, '')).filter((v) => v && v.toLowerCase() !== 'none');
+}
 
 export function scopeField(text, name) {
   const m = new RegExp(`^\\*\\*${name}:\\*\\*[ \\t]*(.*)$`, 'm').exec(visibleText(text ?? ''));

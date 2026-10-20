@@ -16,6 +16,8 @@ None of these contain names, emails or other personal data unless you put them t
 
 Outside `.phaseproof/`, it writes only short-lived records to `phaseproof/` inside the git directory (`.git/phaseproof/`, or the worktree's or submodule's git dir) while code is closed: file paths, sizes, modification times, hashes and symlink targets around each shell command, never file contents. Each record is removed after its command. A record left by a command that never ran (denied or interrupted) is pruned by a later snapshot in the same repository once it is a day old.
 
+At gate time it builds a throwaway git index in the operating system's temp folder to compare test files, and deletes it straight after. Your own index and files are not changed.
+
 ## What it sends
 
 The plugin's own code (the hook and `scripts/phaseproof.mjs`) makes no network requests.

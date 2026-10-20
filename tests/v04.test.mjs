@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, renameSync, rmSync, symlinkSync } from 'node:fs';
+import { decide } from '../scripts/lib/decide.mjs';
 import { join } from 'node:path';
 import { approvalFile, gateFile, readJson, scopeField } from '../scripts/lib/project.mjs';
 import { isSkipLine, isTestFile, testTampering } from '../scripts/lib/tests-guard.mjs';
@@ -241,4 +242,61 @@ test('session context: phase, goal, open or closed, capped, silent when not ours
   assert.equal(context(root), null);
   assert.equal(respond(JSON.stringify({ cwd: tempProject(t) }), ''), '');
   assert.equal(respond('nope', ''), '');
+});
+
+const PY = (name) => `import pytest\nfrom app.models import User\nfrom app.db import session\n\ndef test_${name}():\n    user = User(name="${name}")\n    assert user.name == "${name}"\n`;
+
+test('a new file with the same imports does not excuse deleted tests', (t) => {
+  const root = project(t);
+  for (const n of ['users', 'items', 'orders', 'payments', 'refunds']) put(root, `tests/test_${n}.py`, PY(n));
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'py');
+  const head = git(root, 'rev-parse', 'HEAD').stdout.trim();
+  for (const n of ['users', 'items', 'orders', 'payments', 'refunds']) rmSync(join(root, `tests/test_${n}.py`));
+  put(root, 'tests/test_smoke.py', 'import pytest\nfrom app.models import User\nfrom app.db import session\n\ndef test_smoke():\n    assert True\n');
+  assert.equal(testTampering(root, head).removed.length, 5);
+  git(root, 'add', '-A');
+  assert.equal(testTampering(root, head).removed.length, 5);
+});
+
+test('skip-worktree cannot hide a deleted test', (t) => {
+  const root = project(t);
+  const head = git(root, 'rev-parse', 'HEAD').stdout.trim();
+  git(root, 'update-index', '--skip-worktree', 'src/b.test.js');
+  rmSync(join(root, 'src/b.test.js'));
+  assert.deepEqual(testTampering(root, head).removed, ['src/b.test.js']);
+});
+
+test('an unstaged rename of a file with an old skip reports nothing', (t) => {
+  const root = project(t);
+  put(root, 'src/c.test.js', 'test.skip("old", () => {});\nconst keep = "same content here";\nconst more = 2;\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'c');
+  const head = git(root, 'rev-parse', 'HEAD').stdout.trim();
+  renameSync(join(root, 'src/c.test.js'), join(root, 'src/cc.test.js'));
+  assert.equal(testTampering(root, head), null);
+});
+
+test('several Removes tests lines and bullet lists all count', (t) => {
+  const root = project(t);
+  cli(root, 'approve', '--quick');
+  passCode(root);
+  rmSync(join(root, 'src/a.test.js'));
+  rmSync(join(root, 'src/b.test.js'));
+  put(root, 'phases/phase-01-typo/scope.md', `${SCOPE}\n**Removes tests:** none\n\n**Removes tests:**\n- src/a.test.js\n- \`src/b.test.js\`\n`);
+  cli(root, 'approve', '--quick');
+  const r = cli(root, 'gate');
+  assert.equal(r.code, 0, r.err);
+});
+
+test('a dangling symlink in phases/ neither crashes nor reopens code', { skip: process.platform === 'win32' }, (t) => {
+  const root = project(t);
+  put(root, '.phaseproof/reviews/phase-01-docs.md', PASS);
+  cli(root, 'approve');
+  put(root, 'phases/phase-01-typo/scope.md', `${SCOPE}\nmore\n`);
+  symlinkSync('/nonexistent', join(root, 'phases/phase-01-zlink'));
+  assert.match(cli(root, 'status').out, /stale/);
+  const d = decide({ root, toolName: 'Write', toolInput: { file_path: join(root, 'src/x.js') } });
+  assert.equal(d.allow, false);
+  assert.match(context(root), /Code is closed/);
 });
