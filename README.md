@@ -7,6 +7,7 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-1F5A44)](LICENSE)
 [![version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fspeedsharmaai%2Fphaseproof%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=version&color=1F5A44)](CHANGELOG.md)
 ![dependencies: 0](https://img.shields.io/badge/dependencies-0-1F5A44)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/speedsharmaai/phaseproof/badge)](https://scorecard.dev/viewer/?uri=github.com/speedsharmaai/phaseproof)
 
 **A Claude Code plugin that makes AI build in phases.** Docs first, design next, code only after you approve, and every phase checked by an independent reviewer agent on a stronger model before it closes.
 
