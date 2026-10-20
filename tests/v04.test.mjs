@@ -83,26 +83,29 @@ test('approve rejects unknown options and second folders; files do not count as 
   assert.match(cli(root, 'approve', '--quick').err, /phase 01 has 2 folders \(phase-01-a-fix, phase-01-typo\)/);
 });
 
-test('deleted tests stop the gate unless the scope allows them; skips only warn', (t) => {
+test('deleted tests and new skips warn at the gate but never block it', (t) => {
   const root = project(t);
   cli(root, 'approve', '--quick');
   passCode(root);
   rmSync(join(root, 'src/b.test.js'));
   put(root, 'src/a.test.js', 'test.skip("a", () => { expect(1).toBe(1); });\n');
   const r = cli(root, 'gate');
-  assert.equal(r.code, 1);
-  assert.match(r.err, /test files were deleted since approval, gate stays open:\n {2}src\/b\.test\.js/);
-  assert.match(r.err, /do not edit scope\.md for this yourself/);
-
-  put(root, 'phases/phase-01-typo/scope.md', `${SCOPE}\n**Removes tests:** src/b.test.js\n`);
-  assert.match(cli(root, 'approve', '--quick').out, /The scope allows removing tests: src\/b\.test\.js\./);
-  const ok = cli(root, 'gate');
-  assert.equal(ok.code, 0, ok.err);
-  assert.match(ok.out, /check before trusting this gate:\n {2}possible skip or focus added in src\/a\.test\.js/);
-  assert.equal(readJson(gateFile(root, '01')).testWarnings.length, 1);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /check before trusting this gate \(warnings, the gate does not block on them\):/);
+  assert.match(r.out, /possible deleted test: src\/b\.test\.js \(restore it, stage a move with git add -A, or have the owner list it under \*\*Removes tests:\*\*\)/);
+  assert.match(r.out, /possible skip or focus added in src\/a\.test\.js/);
+  assert.equal(readJson(gateFile(root, '01')).testWarnings.length, 2);
 });
 
-test('re-approving keeps the first base; --new-base resets it; a lost base refuses', (t) => {
+test('tests the owner lists under Removes tests are left out of the warnings', (t) => {
+  const root = project(t);
+  put(root, 'phases/phase-01-typo/scope.md', `${SCOPE}\n**Removes tests:** src/b.test.js\n`);
+  assert.match(cli(root, 'approve', '--quick').out, /The scope allows removing tests: src\/b\.test\.js\./);
+  passCode(root);
+  rmSync(join(root, 'src/b.test.js'));
+  assert.doesNotMatch(cli(root, 'gate').out, /possible deleted test/);
+});
+test('re-approving keeps the first base; --new-base resets it; a lost base warns', (t) => {
   const root = project(t);
   cli(root, 'approve', '--quick');
   rmSync(join(root, 'src/b.test.js'));
@@ -111,17 +114,19 @@ test('re-approving keeps the first base; --new-base resets it; a lost base refus
   cli(root, 'block');
   cli(root, 'approve', '--quick');
   passCode(root);
-  assert.match(cli(root, 'gate').err, /src\/b\.test\.js/);
+  assert.match(cli(root, 'gate').out, /possible deleted test: src\/b\.test\.js/);
+  rmSync(join(root, '.phaseproof/gates/phase-01.json'));
   assert.equal(cli(root, 'approve', '--quick', '--new-base').code, 0);
-  assert.equal(cli(root, 'gate').code, 0);
+  assert.doesNotMatch(cli(root, 'gate').out, /possible deleted test/);
 
   const lost = project(t);
   cli(lost, 'approve', '--quick');
   put(lost, '.phaseproof/approvals/phase-01.json', JSON.stringify({ ...readJson(approvalFile(lost, '01')), base: 'f'.repeat(40) }));
   passCode(lost);
-  assert.match(cli(lost, 'gate').err, /base commit ffffffffffff is gone/);
+  const r = cli(lost, 'gate');
+  assert.equal(r.code, 0);
+  assert.match(r.out, /tests were not compared: the approval's base commit ffffffffffff is gone/);
 });
-
 test('renames are not deletions, staged or not, and old skips in a renamed file are not new', (t) => {
   const root = project(t);
   put(root, 'src/c.test.js', 'test.skip("old", () => {});\nconst keep = "same content here";\n');
@@ -307,14 +312,14 @@ test('git trouble elsewhere in the tree cannot hide a deleted test', { skip: pro
   const root = project(t);
   const head = git(root, 'rev-parse', 'HEAD').stdout.trim();
   rmSync(join(root, 'src/b.test.js'));
-  put(root, 'locked.txt', 'secret');
-  chmodSync(join(root, 'locked.txt'), 0o000);
+  put(root, 'src/locked.test.js', 'secret');
+  chmodSync(join(root, 'src/locked.test.js'), 0o000);
   put(root, 'tool/README', 'x');
   git(join(root, 'tool'), 'init', '-q');
   git(root, 'config', 'diff.orderFile', '/nope');
   git(root, 'config', 'diff.renameLimit', '1');
   const result = testTampering(root, head);
-  chmodSync(join(root, 'locked.txt'), 0o600);
+  chmodSync(join(root, 'src/locked.test.js'), 0o600);
   assert.deepEqual(result.removed, ['src/b.test.js']);
 });
 
@@ -345,4 +350,56 @@ test('Removes tests accepts the usual markdown shapes', () => {
   assert.deepEqual(list('**Removes tests:**\n1. tests/a.py\n+ tests/b.py\n'), ['tests/a.py', 'tests/b.py']);
   assert.deepEqual(list('**Removes tests:** ./tests/a.py (old suite), `tests/b.py`\n'), ['tests/a.py', 'tests/b.py']);
   assert.deepEqual(list('**Removes tests:** none\n'), []);
+});
+
+test('a committed rename or allowed removal cannot hide another deletion, and the known bypasses are caught', (t) => {
+  const root = project(t);
+  put(root, 'src/c.test.js', 'test("c", () => { expect(3).toBe(3); });\nconst c = "third file body";\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'c');
+  const head = git(root, 'rev-parse', 'HEAD').stdout.trim();
+  git(root, 'mv', 'src/c.test.js', 'src/renamed.test.js');
+  git(root, 'commit', '-qm', 'move c');
+  rmSync(join(root, 'src/a.test.js'));
+  assert.deepEqual(testTampering(root, head).removed, ['src/a.test.js']);
+  assert.deepEqual(testTampering(root, head, 'src/a.test.js'), null);
+
+  const mv = project(t);
+  const h2 = git(mv, 'rev-parse', 'HEAD').stdout.trim();
+  git(mv, 'mv', 'src/a.test.js', 'src/aa.test.js');
+  rmSync(join(mv, 'src/aa.test.js'));
+  assert.deepEqual(testTampering(mv, h2).removed, ['src/a.test.js']);
+
+  const ig = project(t);
+  const h3 = git(ig, 'rev-parse', 'HEAD').stdout.trim();
+  git(ig, 'rm', '-q', '--cached', 'src/a.test.js');
+  put(ig, '.gitignore', 'src/a.test.js\n');
+  git(ig, 'add', '.gitignore');
+  git(ig, 'commit', '-qm', 'hide');
+  assert.deepEqual(testTampering(ig, h3).removed, ['src/a.test.js']);
+});
+test('safecrlf, autocrlf and symlink swaps do not hide deletions', { skip: process.platform === 'win32' }, (t) => {
+  const root = project(t);
+  const head = git(root, 'rev-parse', 'HEAD').stdout.trim();
+  git(root, 'config', 'core.autocrlf', 'true');
+  git(root, 'config', 'core.safecrlf', 'true');
+  put(root, 'src/new.test.js', 'a\r\nb\nc\r\n');
+  rmSync(join(root, 'src/b.test.js'));
+  rmSync(join(root, 'src/a.test.js'));
+  symlinkSync('new.test.js', join(root, 'src/a.test.js'));
+  assert.deepEqual(testTampering(root, head).removed, ['src/a.test.js', 'src/b.test.js']);
+});
+
+test('a big codemod across many test files neither crashes nor falsely refuses', (t) => {
+  const root = project(t);
+  for (let i = 0; i < 2500; i++) put(root, `tests/very/long/directory/name/for/argv/limits/case_${i}.test.js`, `test("${i}", () => {});\n`);
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'many');
+  const head = git(root, 'rev-parse', 'HEAD').stdout.trim();
+  for (let i = 0; i < 2500; i++) put(root, `tests/very/long/directory/name/for/argv/limits/case_${i}.test.js`, `test("${i}!", () => {});\n`);
+  assert.equal(testTampering(root, head), null);
+});
+
+test('none on the Removes tests line keeps later bullets out', () => {
+  assert.deepEqual(scopeList('**Removes tests:** none\n\n- left for later\n', 'Removes tests'), []);
 });

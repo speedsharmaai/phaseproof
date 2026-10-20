@@ -159,23 +159,17 @@ const commands = {
     const docs = approval.size === 'quick' ? readText(reviewFile(root, phase, 'docs')) : requireReview(root, phase, 'docs');
     const code = requireReview(root, phase, 'code');
     const tests = testTampering(root, approval.base ?? approval.head, removalAllowance(root, phase));
-    if (tests?.unverifiable) {
-      refuse(`the approval's base commit ${tests.unverifiable.slice(0, 12)} is gone (rebase or gc), so tests can't be compared. The owner runs /phaseproof:approve ${phase} --new-base after checking the tests by hand.`);
-    }
-    if (tests?.unchecked) {
-      refuse(`deleted tests could not be checked: ${tests.unchecked}. The gate stays open; run git status to see why.`);
-    }
-    if (approval.base === null) out('note: this phase was approved before the repository had any history, so deleted tests were not checked.');
-    if (tests?.removed.length) {
-      refuse(`test files were deleted since approval, gate stays open:\n  ${tests.removed.join('\n  ')}\nRestore them. If the owner wants them gone, they list them in scope.md under **Removes tests:** and approve again; do not edit scope.md for this yourself.`);
-    }
     const warnings = [
+      ...(tests?.unverifiable ? [`tests were not compared: the approval's base commit ${tests.unverifiable.slice(0, 12)} is gone (rebase or gc). /phaseproof:approve ${phase} --new-base records a new one`] : []),
+      ...(tests?.unchecked ? [`tests were not compared: ${tests.unchecked}`] : []),
+      ...(approval.base === null ? ['tests were not compared: this phase was approved before the repository had any history'] : []),
+      ...(tests?.removed ?? []).map((f) => `possible deleted test: ${f} (restore it, stage a move with git add -A, or have the owner list it under **Removes tests:**)`),
       ...(tests?.skipped ?? []).map((s) => `possible skip or focus added in ${s.file}: ${s.line}`),
       ...(tests?.incomplete ? ['the skip check could not read every test diff'] : []),
     ];
     const results = checkResults(root, phase);
     out(describe(results));
-    if (warnings.length) out(`check before trusting this gate:\n  ${warnings.join('\n  ')}`);
+    if (warnings.length) out(`check before trusting this gate (warnings, the gate does not block on them):\n  ${warnings.join('\n  ')}`);
     if (!allPassed(results)) refuse('checks failing, gate stays open');
     writeJson(gateFile(root, phase), {
       phase,

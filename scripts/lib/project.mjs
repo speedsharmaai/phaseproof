@@ -85,6 +85,7 @@ export function scopeList(text, name) {
     const m = head.exec(lines[i]);
     if (!m) continue;
     out.push(...m[1].split(','));
+    if (m[1].trim()) continue;
     let j = i + 1;
     while (j < lines.length && !lines[j].trim()) j++;
     for (; j < lines.length && BULLET.test(lines[j]); j++) out.push(lines[j].replace(BULLET, ''));

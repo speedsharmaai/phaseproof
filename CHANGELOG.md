@@ -3,7 +3,7 @@
 ## 0.4.0 - 2026-10-20
 
 - `/phaseproof:quick` for small changes: the owner approves with `approve --quick`, which skips the docs review; one code review and the gate still apply. Nothing in scope.md can make a phase quick
-- Test guard: the gate refuses when test files were deleted since the first approval (renames don't count) unless the scope lists them, and warns about new skip or focus markers in JS/TS, Python, Go, Ruby, Rust, JVM, C# and Swift tests
+- Test guard: at gate time, tests that look deleted since the first approval and new skip or focus markers (JS/TS, Python, Go, Ruby, Rust, JVM, C#, Swift) are printed as warnings and recorded in gate.json. They do not block: after seven review rounds, every blocking version either had a bypass or refused legitimate work
 - SessionStart hook re-states the current phase, its goal and whether code is open after startup, compact, clear and resume
 - Existing codebases: kickoff maps the repo first and records the stack and conventions it actually has
 - `docs/learnings.md`: each phase records what the reviewer caught; planning and both reviewers read it

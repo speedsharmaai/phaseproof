@@ -1,7 +1,7 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { accessSync, constants, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const TEST_FILE = [
   /(^|\/)(tests?|__tests__|spec)\/.+\.(c|m)?[jt]sx?$/,
@@ -52,12 +52,13 @@ export const isTestFile = (path) => !NOT_TEST.test(path) && TEST_FILE.some((re) 
 export const isSkipLine = (path, line) => (SKIPS[kindOf(path)] ?? []).some((re) => re.test(line));
 const watched = (path) => isTestFile(path) || kindOf(path) === 'rs';
 
-const DIFF = ['--no-ext-diff', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', '--relative'];
-const git = (root, args, index) =>
+const ORDER = fileURLToPath(new URL('./empty.order', import.meta.url));
+const DIFF = ['--no-ext-diff', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', '--relative', `-O${ORDER}`];
+const git = (root, args, input) =>
   spawnSync(
     'git',
     ['--no-optional-locks', '--literal-pathspecs', '-c', 'core.quotePath=false', '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', '-c', 'diff.renameLimit=0', ...args],
-    { cwd: root, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, env: index ? { ...process.env, GIT_INDEX_FILE: index } : undefined },
+    { cwd: root, input, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 },
   );
 
 function parsePlusPath(line) {
@@ -84,81 +85,121 @@ function allowed(list) {
 
 const zlist = (r) => (r.status === 0 ? r.stdout.split('\0').filter(Boolean) : null);
 
-function candidates(root, base, order) {
-  const inBase = zlist(git(root, ['ls-tree', '-r', '--name-only', '-z', base, '--', '.']));
-  const untracked = zlist(git(root, ['ls-files', '--others', '--exclude-standard', '-z']));
-  const changed = zlist(git(root, ['diff', ...DIFF, order, '--name-only', '-z', base]));
-  if (!inBase || !untracked || !changed) return null;
-  const gone = inBase.filter((p) => isTestFile(p) && !existsSync(join(root, p)));
-  return [...new Set([...gone, ...untracked.filter(watched), ...changed.filter(watched)])];
-}
-
-function withScratch(fn) {
-  const dir = mkdtempSync(join(tmpdir(), 'phaseproof-'));
-  const order = join(dir, 'order');
-  writeFileSync(order, '');
+const isRegularFile = (path) => {
   try {
-    return fn(join(dir, 'index'), `-O${order}`);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+    return lstatSync(path).isFile();
+  } catch {
+    return false;
   }
-}
+};
 
-function buildTestIndex(root, paths, index) {
-  if (git(root, ['read-tree', 'HEAD'], index).status !== 0 && git(root, ['read-tree', '--empty'], index).status !== 0) return false;
-  for (let i = 0; i < paths.length; i += 200) git(root, ['add', '-A', '--ignore-errors', '--', ...paths.slice(i, i + 200)], index);
-  return true;
-}
-
-function changesSince(root, base, index, order, paths) {
-  const names = git(root, ['diff', ...DIFF, order, '--cached', '--name-status', '-M75%', '-z', base, '--', ...paths], index);
-  if (names.status !== 0) return null;
-  const parts = names.stdout.split('\0').filter(Boolean);
-  const out = { deleted: [], touched: [] };
-  for (let i = 0; i < parts.length; ) {
-    const code = parts[i];
-    if (code.startsWith('R') || code.startsWith('C')) {
-      const [from, to] = [parts[i + 1], parts[i + 2]];
-      if (isTestFile(from) && !isTestFile(to)) out.deleted.push(from);
-      if (watched(to)) out.touched.push(from, to);
-      i += 3;
-      continue;
-    }
-    const path = parts[i + 1];
-    if (code === 'D' && isTestFile(path)) out.deleted.push(path);
-    else if (code !== 'D' && watched(path)) out.touched.push(path);
-    i += 2;
+function treeTests(root, rev) {
+  const r = git(root, ['ls-tree', '-r', '-z', rev, '--', '.']);
+  if (r.status !== 0) return null;
+  const out = new Map();
+  for (const entry of r.stdout.split('\0').filter(Boolean)) {
+    const tab = entry.indexOf('\t');
+    const [, type, oid] = entry.slice(0, tab).split(' ');
+    const path = entry.slice(tab + 1);
+    if (type === 'blob' && isTestFile(path)) out.set(path, oid);
   }
   return out;
 }
 
-function skipsInDiff(root, base, touched, index, order) {
-  if (!touched.length) return { skipped: [], failed: false };
-  const diff = git(root, ['diff', ...DIFF, order, '--cached', '-M75%', '-U0', base, '--', ...new Set(touched)], index);
-  if (diff.status !== 0) return { skipped: [], failed: true };
+function nameStatus(root, args) {
+  const parts = zlist(git(root, ['diff', ...DIFF, '--name-status', '-M75%', '-z', ...args]));
+  if (!parts) return null;
+  const entries = [];
+  for (let i = 0; i < parts.length; ) {
+    const code = parts[i];
+    if (code.startsWith('R') || code.startsWith('C')) {
+      entries.push({ code: code[0], from: parts[i + 1], to: parts[i + 2] });
+      i += 3;
+    } else {
+      entries.push({ code, from: parts[i + 1], to: parts[i + 1] });
+      i += 2;
+    }
+  }
+  return entries;
+}
+
+const deletedIn = (entries) =>
+  entries.filter((e) => (e.code === 'D' && isTestFile(e.from)) || (e.code === 'R' && isTestFile(e.from) && !isTestFile(e.to))).map((e) => e.from);
+
+const readable = (path) => {
+  try {
+    accessSync(path, constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+function hashFiles(root, all) {
+  const paths = all.filter((p) => readable(join(root, p)));
+  if (!paths.length) return new Map();
+  const r = git(root, ['hash-object', '--no-filters', '--stdin-paths'], paths.join('\n') + '\n');
+  if (r.status !== 0) return null;
+  const oids = r.stdout.trim().split('\n');
+  return new Map(paths.map((p, i) => [p, oids[i]]));
+}
+
+function removedSince(root, base) {
+  const committed = nameStatus(root, [base, 'HEAD']);
+  const staged = nameStatus(root, ['--cached', 'HEAD']);
+  const head = treeTests(root, 'HEAD');
+  const untracked = zlist(git(root, ['ls-files', '--others', '--exclude-standard', '-z']));
+  if (!committed || !staged || !head || !untracked) return null;
+
+  const index = zlist(git(root, ['ls-files', '-z']));
+  if (!index) return null;
+  const tracked = new Set(index);
+  const stagedAway = new Set(staged.filter((e) => e.code === 'R' && isTestFile(e.to) && isRegularFile(join(root, e.to))).map((e) => e.from));
+  const missing = [...head.keys()].filter((p) => !isRegularFile(join(root, p)) && !stagedAway.has(p));
+  const newTests = untracked.filter(isTestFile).filter((p) => isRegularFile(join(root, p)));
+  const hashes = hashFiles(root, newTests);
+  if (!hashes) return null;
+  const movedOids = new Set(hashes.values());
+  const worktreeGone = missing.filter((p) => !movedOids.has(head.get(p)));
+
+  const lost = (p) => !tracked.has(p) || !isRegularFile(join(root, p));
+  const stagedLost = staged.filter((e) => e.code === 'R' && isTestFile(e.from) && !isRegularFile(join(root, e.to))).map((e) => e.from);
+  return [...new Set([...deletedIn(committed).filter(lost), ...deletedIn(staged).filter(lost), ...stagedLost, ...worktreeGone])];
+}
+
+function skipsSince(root, base) {
+  const diff = git(root, ['diff', ...DIFF, '-M75%', '-U0', base]);
+  const untracked = zlist(git(root, ['ls-files', '--others', '--exclude-standard', '-z']));
   const skipped = [];
   let file = null;
-  for (const line of diff.stdout.split('\n')) {
+  for (const line of diff.status === 0 ? diff.stdout.split('\n') : []) {
     if (line.startsWith('+++ ')) file = parsePlusPath(line);
-    else if (file && line.startsWith('+') && isSkipLine(file, line.slice(1))) skipped.push({ file, line: line.slice(1).trim().slice(0, 120) });
+    else if (file && watched(file) && line.startsWith('+') && isSkipLine(file, line.slice(1))) skipped.push({ file, line: line.slice(1).trim().slice(0, 120) });
   }
-  return { skipped, failed: false };
+  const fresh = (untracked ?? []).filter(watched);
+  const headOids = new Set((treeTests(root, 'HEAD') ?? new Map()).values());
+  const oids = hashFiles(root, fresh) ?? new Map();
+  for (const path of fresh.filter((p) => !headOids.has(oids.get(p)))) {
+    let text = '';
+    try {
+      text = readFileSync(join(root, path), 'utf8');
+    } catch {
+      continue;
+    }
+    const hit = text.split('\n').find((line) => isSkipLine(path, line));
+    if (hit) skipped.push({ file: path, line: hit.trim().slice(0, 120) });
+  }
+  return { skipped, failed: diff.status !== 0 || !untracked };
 }
 
 export function testTampering(root, base, allowList = '') {
   if (!base) return null;
   if (git(root, ['rev-parse', '--git-dir']).status !== 0) return null;
   if (git(root, ['cat-file', '-e', `${base}^{commit}`]).status !== 0) return { unverifiable: base };
+  const gone = removedSince(root, base);
+  if (!gone) return { unchecked: 'git could not list the test files that changed since approval' };
   const ok = allowed(allowList);
-  return withScratch((index, order) => {
-    const paths = candidates(root, base, order);
-    if (!paths) return { unchecked: 'git could not list the files that changed since approval' };
-    if (!paths.length) return null;
-    if (!buildTestIndex(root, paths, index)) return { unchecked: 'git could not build a scratch index for the test files' };
-    const changes = changesSince(root, base, index, order, paths);
-    if (!changes) return { unchecked: 'git could not compare the test files with the approval base' };
-    const removed = changes.deleted.filter((p) => !ok(p));
-    const { skipped, failed } = skipsInDiff(root, base, changes.touched, index, order);
-    return removed.length || skipped.length || failed ? { removed, skipped, incomplete: failed } : null;
-  });
+  const removed = gone.filter((p) => !ok(p)).sort();
+  const { skipped, failed } = skipsSince(root, base);
+  return removed.length || skipped.length || failed ? { removed, skipped, incomplete: failed } : null;
 }
