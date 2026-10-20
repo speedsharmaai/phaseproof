@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
-import { approvalFile, blockFile, gateFile, isActive, loadConfig, loadState, scopeChanged } from './project.mjs';
+import { approvalFile, blockFile, gateFile, isActive, loadConfig, loadState, readJson, scopeChanged } from './project.mjs';
 
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const PROTECTED_IN_BASH = /\.phaseproof[\\/]+(gates|approvals|runs|blocks)\b/;
@@ -56,7 +56,8 @@ export function closedReason(root) {
     return `phase ${phase} is blocked after two failed code reviews. The owner decides: fix the scope and re-review it, or run /phaseproof:approve ${phase} to give the builder another round.`;
   }
   if (scopeChanged(root, phase)) {
-    return `phase ${phase} scope changed after it was approved. Get the docs reviewed again, then the owner runs /phaseproof:approve ${phase}.`;
+    const quick = readJson(approvalFile(root, phase), {}).size === 'quick';
+    return `phase ${phase} scope changed after it was approved. ${quick ? `The owner runs /phaseproof:approve ${phase} --quick again, or reviews the docs first for a full approval.` : `Get the docs reviewed again, then the owner runs /phaseproof:approve ${phase}.`}`;
   }
   if (existsSync(gateFile(root, phase))) {
     return `phase ${phase} already passed its gate. Plan the next phase and get it approved before more code.`;

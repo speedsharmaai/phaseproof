@@ -14,6 +14,8 @@
 
 - <thing deliberately left for later, and which phase picks it up>
 
+**Removes tests:** none
+
 ## Decisions
 
 - <choices made for this phase, or links to ADRs>

@@ -18,6 +18,7 @@ Check:
 - Risky or irreversible choices (data model, auth, money, deletes, migrations) have an ADR or an explicit decision.
 - The phase names who it is for and what they can do afterwards that they could not do before.
 - The smallest version that delivers that is in scope; nice-to-haves are out of scope, not hidden in tasks.
+- Mistakes listed in `docs/learnings.md`, if it exists, are not being repeated.
 
 Reply in exactly this shape:
 

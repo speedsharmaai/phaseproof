@@ -12,6 +12,7 @@ import {
   loadState,
   padPhase,
   phaseDir,
+  phaseDirs,
   ppPath,
   readJson,
   readText,
@@ -19,17 +20,21 @@ import {
   runFile,
   scopeChanged,
   scopeHash,
+  scopeList,
+  scopeText,
   sha256,
   writeJson,
 } from './lib/project.mjs';
 import { parseVerdict } from './lib/verdict.mjs';
+import { testTampering } from './lib/tests-guard.mjs';
 
 const USAGE = `usage: phaseproof <command>
 
   init [--check "<cmd>"]... [--phase NN]
                               start tracking this project (checks run before every gate)
   status                      current phase and what it is waiting on
-  approve <phase>             owner sign-off that opens code for a phase (also clears a block)
+  approve <phase> [--quick] [--new-base]
+                              owner sign-off that opens code for a phase (also clears a block)
   check [phase]               run the configured checks and record the result
   gate <phase>                re-run checks, read the code review, close the phase
   block [phase]               stop the phase after a failed code review until the owner decides
@@ -39,6 +44,36 @@ class Refusal extends Error {}
 const refuse = (msg) => {
   throw new Refusal(msg);
 };
+
+function requireOneFolder(root, phase) {
+  const dirs = phaseDirs(root, phase);
+  if (dirs.length > 1) refuse(`phase ${phase} has ${dirs.length} folders (${dirs.map((d) => d.split(/[\\/]/).pop()).join(', ')}). Keep one; a quick fix waits for the current phase or goes into its scope.`);
+  return dirs[0] ?? null;
+}
+
+const removalAllowance = (root, phase) => scopeList(scopeText(root, phase), 'Removes tests').join(', ');
+
+const MAX_WARNINGS = 50;
+
+function testWarnings(root, phase, approval) {
+  try {
+    const base = approval.base ?? approval.head ?? null;
+    if (base === null) {
+      return [gitHead(root) === null && !existsSync(join(root, '.git')) ? 'tests were not compared: this project is not a git repository' : 'tests were not compared: this phase was approved before the repository had any history'];
+    }
+    const tests = testTampering(root, base, removalAllowance(root, phase));
+    const all = [
+      ...(tests?.unverifiable ? [`tests were not compared: the approval's base commit ${String(tests.unverifiable).slice(0, 12)} is gone (rebase or gc). /phaseproof:approve ${phase} --new-base records a new one`] : []),
+      ...(tests?.unchecked ? [`tests were not compared: ${tests.unchecked}`] : []),
+      ...(tests?.removed ?? []).map((f) => `possible deleted test: ${f} (restore it, stage a move with git add -A, or have the owner list it under **Removes tests:**)`),
+      ...(tests?.skipped ?? []).map((s) => `possible skip or focus added in ${s.file}: ${s.line}`),
+      ...(tests?.incomplete ? ['the skip check could not read every test diff'] : []),
+    ];
+    return all.length > MAX_WARNINGS ? [...all.slice(0, MAX_WARNINGS), `and ${all.length - MAX_WARNINGS} more`] : all;
+  } catch (e) {
+    return [`tests were not compared: ${e.message}`];
+  }
+}
 
 function requireActive(root) {
   if (!isActive(root)) refuse('this project is not tracked yet. Run: phaseproof init');
@@ -85,9 +120,10 @@ const commands = {
     const run = readJson(runFile(root, phase), null);
     const approved = existsSync(approvalFile(root, phase));
     const block = readJson(blockFile(root, phase), null);
+    const size = (readJson(approvalFile(root, phase), {}) ?? {}).size;
     const lines = [
-      `phase ${phase}${dir ? ` (${dir.split(/[\\/]/).pop()})` : ' (no phase folder yet)'}`,
-      `  docs review  ${docs.pass ? 'pass' : docs.reason}`,
+      `phase ${phase}${dir ? ` (${dir.split(/[\\/]/).pop()})` : ' (no phase folder yet)'}${size === 'quick' ? ', approved as quick' : ''}`,
+      `  docs review  ${docs.pass ? 'pass' : size === 'quick' ? `skipped, the owner approved it as quick (${docs.reason})` : docs.reason}`,
       `  approved     ${approved ? (scopeChanged(root, phase) ? 'stale, scope changed since approval' : 'yes') : 'no'}`,
       `  checks       ${run ? (allPassed(run.results) ? 'pass' : 'failing') : 'not run'}`,
       `  code review  ${code.pass ? 'pass' : code.reason}`,
@@ -99,21 +135,31 @@ const commands = {
 
   approve(root, args, out) {
     const { phase: current } = requireActive(root);
-    const phase = padPhase(args[0] ?? current);
+    const unknown = args.filter((a) => a.startsWith('--') && !['--quick', '--new-base'].includes(a));
+    if (unknown.length) refuse(`unknown option ${unknown.join(', ')}. Options: --quick, --new-base`);
+    const phase = padPhase(args.find((a) => !a.startsWith('--')) ?? current);
     if (phase !== current) refuse(`current phase is ${current}, not ${phase}`);
-    const dir = phaseDir(root, phase);
+    const dir = requireOneFolder(root, phase);
     if (!dir || !existsSync(join(dir, 'scope.md'))) refuse(`write phases/phase-${phase}-<name>/scope.md first`);
-    const docs = sha256(requireReview(root, phase, 'docs'));
+    const previous = readJson(approvalFile(root, phase), null);
+    const existingDocs = readText(reviewFile(root, phase, 'docs'));
+    const quick = args.includes('--quick');
+    const docsText = quick ? existingDocs : requireReview(root, phase, 'docs');
+    const docs = docsText ? sha256(docsText) : null;
     if (existsSync(join(dir, 'screens.md'))) requireReview(root, phase, 'design');
     const scope = scopeHash(root, phase);
-    const previous = readJson(approvalFile(root, phase), null);
-    if (previous?.scopeHash && previous.scopeHash !== scope && previous.docsReview === docs) {
+    if (!quick && previous?.scopeHash && previous.scopeHash !== scope && previous.docsReview === docs) {
       refuse(`phase ${phase} scope changed since the last approval. Get a fresh docs review first.`);
     }
-    writeJson(approvalFile(root, phase), { phase, approvedAt: new Date().toISOString(), head: gitHead(root), scopeHash: scope, docsReview: docs });
+    const head = gitHead(root);
+    const base = args.includes('--new-base') ? head : (previous?.base ?? previous?.head ?? head);
+    writeJson(approvalFile(root, phase), { phase, approvedAt: new Date().toISOString(), head, base, size: quick ? 'quick' : 'full', scopeHash: scope, docsReview: docs });
     const unblocked = existsSync(blockFile(root, phase));
     if (unblocked) rmSync(blockFile(root, phase));
-    out(`phase ${phase} approved. Code is open for this phase.${unblocked ? ' Block cleared.' : ''}`);
+    const notes = [];
+    if (quick) notes.push(existingDocs && !parseVerdict(existingDocs).pass ? 'Approved as quick even though its docs review failed.' : 'Approved as quick: no docs review.');
+    if (removalAllowance(root, phase)) notes.push(`The scope allows removing tests: ${removalAllowance(root, phase)}.`);
+    out(`phase ${phase} approved. Code is open for this phase.${unblocked ? ' Block cleared.' : ''}${notes.length ? ` ${notes.join(' ')}` : ''}`);
   },
 
   check(root, args, out) {
@@ -128,19 +174,24 @@ const commands = {
     const { phase: current } = requireActive(root);
     const phase = padPhase(args[0] ?? current);
     if (!existsSync(approvalFile(root, phase))) refuse(`phase ${phase} was never approved`);
+    requireOneFolder(root, phase);
     if (existsSync(blockFile(root, phase))) refuse(`phase ${phase} is blocked. The owner has to approve it again first`);
     if (scopeChanged(root, phase)) refuse(`phase ${phase} scope changed since approval. Review it and approve again`);
-    const docs = requireReview(root, phase, 'docs');
+    const approval = (readJson(approvalFile(root, phase), {}) ?? {});
+    const docs = approval.size === 'quick' ? readText(reviewFile(root, phase, 'docs')) : requireReview(root, phase, 'docs');
     const code = requireReview(root, phase, 'code');
+    const warnings = testWarnings(root, phase, approval);
     const results = checkResults(root, phase);
     out(describe(results));
+    if (warnings.length) out(`check before trusting this gate (warnings, the gate does not block on them):\n  ${warnings.join('\n  ')}`);
     if (!allPassed(results)) refuse('checks failing, gate stays open');
     writeJson(gateFile(root, phase), {
       phase,
       passedAt: new Date().toISOString(),
       head: gitHead(root),
       checks: results.map(({ cmd, code: c, ms }) => ({ cmd, code: c, ms })),
-      reviews: { docs: sha256(docs), code: sha256(code) },
+      reviews: { docs: docs ? sha256(docs) : null, code: sha256(code) },
+      testWarnings: warnings,
     });
     out(`phase ${phase} gate: PASS`);
   },

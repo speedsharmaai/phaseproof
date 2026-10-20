@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -43,13 +43,67 @@ export function readText(file) {
 export const loadConfig = (root) => ({ ...DEFAULT_CONFIG, ...readJson(ppPath(root, 'config.json'), {}) });
 export const loadState = (root) => readJson(ppPath(root, 'state.json'), null);
 
-export function phaseDir(root, phase) {
+const isDir = (path) => {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+export function phaseDirs(root, phase) {
   const base = join(root, 'phases');
-  if (!existsSync(base)) return null;
-  const hit = readdirSync(base)
+  if (!isDir(base)) return [];
+  return readdirSync(base)
     .sort()
-    .find((n) => n === `phase-${phase}` || n.startsWith(`phase-${phase}-`));
-  return hit ? join(base, hit) : null;
+    .filter((n) => n === `phase-${phase}` || n.startsWith(`phase-${phase}-`))
+    .map((n) => join(base, n))
+    .filter(isDir);
+}
+
+export function phaseDir(root, phase) {
+  return phaseDirs(root, phase)[0] ?? null;
+}
+
+function visibleText(md) {
+  let text = md.replace(/\r/g, '').replace(/```[\s\S]*?(```|$)/g, '');
+  let before;
+  do {
+    before = text;
+    text = text.replace(/<!--[\s\S]*?(-->|$)/g, '');
+  } while (text !== before);
+  return text;
+}
+
+const BULLET = /^\s*(?:[-*+]|\d+[.)])\s+/;
+const cleanPath = (v) =>
+  v
+    .trim()
+    .replace(/^`|`$/g, '')
+    .replace(/\s+\(.*\)$/, '')
+    .replace(/^`|`$/g, '')
+    .replace(/^\.\//, '')
+    .trim();
+
+export function scopeList(text, name) {
+  const out = [];
+  const lines = visibleText(text ?? '').split('\n');
+  const head = new RegExp(`^\\*\\*${name}:\\*\\*[ \\t]*(.*)$`);
+  for (let i = 0; i < lines.length; i++) {
+    const m = head.exec(lines[i]);
+    if (!m) continue;
+    out.push(...m[1].split(','));
+    if (m[1].trim()) continue;
+    let j = i + 1;
+    while (j < lines.length && !lines[j].trim()) j++;
+    for (; j < lines.length && BULLET.test(lines[j]); j++) out.push(lines[j].replace(BULLET, ''));
+  }
+  return out.map(cleanPath).filter((v) => v && v.toLowerCase() !== 'none');
+}
+
+export function scopeField(text, name) {
+  const m = new RegExp(`^\\*\\*${name}:\\*\\*[ \\t]*(.*)$`, 'm').exec(visibleText(text ?? ''));
+  return m ? m[1].trim() : null;
 }
 
 export const approvalFile = (root, phase) => ppPath(root, 'approvals', `phase-${phase}.json`);
@@ -69,12 +123,17 @@ export function scopeHash(root, phase) {
   return sha256(parts.join('\n---\n'));
 }
 
+export function scopeText(root, phase) {
+  const dir = phaseDir(root, phase);
+  return (dir && readText(join(dir, 'scope.md'))) ?? '';
+}
+
 export function scopeChanged(root, phase) {
   const approval = readJson(approvalFile(root, phase), null);
   return Boolean(approval?.scopeHash) && approval.scopeHash !== scopeHash(root, phase);
 }
 
 export function gitHead(root) {
-  const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
+  const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 20000 });
   return r.status === 0 ? r.stdout.trim() : null;
 }

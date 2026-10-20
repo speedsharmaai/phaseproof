@@ -1,7 +1,7 @@
 ---
 name: approve
 description: Owner sign-off that opens code for the current phase. Only the owner runs this.
-argument-hint: "<NN>"
+argument-hint: "<NN> [--quick] [--new-base]"
 disable-model-invocation: true
 allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/phaseproof.mjs" approve:*)
 ---
