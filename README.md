@@ -71,6 +71,8 @@ Every agent pins its own model, so you never switch with `/model` by hand. Cheap
 
 This follows Anthropic's own split: Haiku for simple tasks, Sonnet for daily coding, Opus for complex reasoning ([model config docs](https://code.claude.com/docs/en/model-config)). Reviewers run on a stronger model than the builder because a model is bad at catching its own mistakes.
 
+Each agent also carries a senior role and judges from the user's seat: the design reviewer checks what a new user understands in the first five seconds, the code reviewer reads as the on-call engineer and the next maintainer, the doc reviewer checks that the phase names who it is for and what they can do afterwards.
+
 To run an agent on a different model, copy its file from `agents/` into `~/.claude/agents/`, change `model:`, and your copy takes priority over the plugin's.
 
 ## What the gate does and does not stop
@@ -134,7 +136,7 @@ No server, no telemetry, nothing collected. See [PRIVACY.md](PRIVACY.md).
 
 ## Status
 
-v0.2.1. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
+v0.2.2. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
 
 ## Related projects
 
