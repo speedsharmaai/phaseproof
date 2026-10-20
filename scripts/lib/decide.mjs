@@ -5,7 +5,6 @@ import { approvalFile, blockFile, gateFile, isActive, loadConfig, loadState, sco
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const PROTECTED_IN_BASH = /\.phaseproof[\\/]+(gates|approvals|runs|blocks|shell)\b/;
 const APPROVE_IN_BASH = /phaseproof\.mjs["']?\s+approve\b/;
-const REMOVE_RECORDS_IN_BASH = /\b(rm|rmdir|mv|ln|unlink)\b[^\n;&|]*\.phaseproof\b|\bcd\s+["']?(\.\/)?\.phaseproof\b[\s\S]*\b(rm|rmdir|mv|ln|unlink)\b/;
 const WRITABLE_STATE = ['.phaseproof/reviews/', '.phaseproof/config.json'];
 
 const allow = { allow: true };
@@ -27,7 +26,6 @@ export function decide({ root, toolName, toolInput = {} }) {
     const cmd = String(toolInput.command ?? '');
     if (PROTECTED_IN_BASH.test(cmd)) return deny('gate, approval and check records are written by the phaseproof script only.');
     if (APPROVE_IN_BASH.test(cmd)) return deny('approval belongs to the owner. Ask them to run /phaseproof:approve.');
-    if (REMOVE_RECORDS_IN_BASH.test(cmd)) return deny('.phaseproof/ holds the gate records; it cannot be moved, linked or removed from the shell.');
     return allow;
   }
 

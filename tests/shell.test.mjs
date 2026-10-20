@@ -166,7 +166,8 @@ test('hooks end to end: closed phase reports to Claude and the owner, open phase
   assert.equal(out.decision, 'block');
   assert.match(out.reason, /code changed during that shell command while code is closed: src\/a\.js/);
   assert.match(out.reason, /did not touch any file/);
-  assert.match(out.systemMessage, /Claude was told to undo it/);
+  assert.match(out.reason, /Stop, tell the owner/);
+  assert.match(out.systemMessage, /Nothing was undone\. Claude was asked to stop and wait for you/);
 
   pre(input('e2', 'PreToolUse'), root);
   put(root, 'src/a.js', 'y\n');
@@ -193,11 +194,13 @@ test('post hook runs as a process and fails open', () => {
   assert.equal(r.stdout, '');
 });
 
-test('undoing a change back to the committed version is not reported', (t) => {
+test('a dirty file returned to its committed version is reported as discarded work, not as new code', (t) => {
   const root = closedRepo(t);
-  put(root, 'src/a.js', 'by shell\n');
-  assert.equal(changedBy(root, 'u1', () => git(root, 'checkout', '--', 'src/a.js')), null);
-  assert.equal(read(root, 'src/a.js'), 'original\n');
+  put(root, 'src/a.js', 'owner work\n');
+  const r = changedBy(root, 'u1', () => git(root, 'checkout', '--', 'src/a.js'));
+  assert.deepEqual(r.changed, []);
+  assert.deepEqual(r.discarded, ['src/a.js']);
+  assert.match(describeViolation('closed', r), /uncommitted changes that existed before the command are gone now: src\/a\.js/);
 });
 
 test('a symlinked snapshot folder or gitignore turns the guard off instead of writing through it', { skip: process.platform === 'win32' }, (t) => {
@@ -233,19 +236,48 @@ test('prune only removes its own old snapshot files', (t) => {
   assert.deepEqual(left, ['fresh.json', 'keep-me.txt', 'pr1.json']);
 });
 
-test('the message protects uncommitted work from a blanket undo', (t) => {
+test('moving owner work is reported on both paths and the message never advises a destructive fix', (t) => {
   const root = closedRepo(t);
-  put(root, 'src/mine.js', 'tracked\n');
-  git(root, 'add', '-A');
-  git(root, 'commit', '-qm', 'mine');
-  put(root, 'src/mine.js', 'owner work in progress\n');
+  put(root, 'src/owner-new.js', 'only copy\n');
   const r = changedBy(root, 'w1', () => {
-    put(root, 'src/mine.js', 'owner work in progress\nshell line\n');
-    put(root, 'src/a.js', 'by shell\n');
+    put(root, 'src/moved.js', 'only copy\n');
+    rmSync(join(root, 'src/owner-new.js'));
   });
-  assert.deepEqual(r.hadWork, ['src/mine.js']);
+  assert.deepEqual(r.changed, ['src/moved.js']);
+  assert.deepEqual(r.discarded, ['src/owner-new.js']);
   const m = describeViolation('closed', r);
-  assert.match(m, /src\/a\.js had no uncommitted changes before the command/);
-  assert.match(m, /src\/mine\.js already had the owner's uncommitted work before the command\. Do not run git checkout, restore, reset, stash or clean/);
-  assert.match(m, /If you did not make a change, leave it alone/);
+  assert.match(m, /Do not modify, restore, move or delete these files/);
+  assert.doesNotMatch(m, /undo them|delete files you created|restore them from git/);
+});
+
+test('a symlink planted at the temp snapshot name is not written through', { skip: process.platform === 'win32' }, (t) => {
+  const root = closedRepo(t);
+  mkdirSync(join(root, '.phaseproof/shell'), { recursive: true });
+  symlinkSync('../../src/a.js', join(root, '.phaseproof/shell/j1.json.tmp'));
+  assert.equal(snapshot(root, 'j1'), true);
+  assert.equal(read(root, 'src/a.js'), 'original\n');
+});
+
+test('init never writes through a gitignore link', { skip: process.platform === 'win32' }, (t) => {
+  const root = tempProject(t);
+  mkdirSync(join(root, '.phaseproof'), { recursive: true });
+  symlinkSync('../src/new.js', join(root, '.phaseproof/.gitignore'));
+  assert.equal(cli(root, 'init').code, 0);
+  assert.equal(existsSync(join(root, 'src/new.js')), false);
+});
+
+test('a committed rename reports both paths', (t) => {
+  const root = closedRepo(t);
+  const r = changedBy(root, 'k1', () => {
+    git(root, 'mv', 'src/a.js', 'src/b.js');
+    git(root, 'commit', '-qm', 'rename');
+  });
+  assert.deepEqual(r.committed.sort(), ['src/a.js', 'src/b.js']);
+});
+
+test('files over 1 MB are compared by size and mtime', (t) => {
+  const root = closedRepo(t);
+  put(root, 'big.bin', Buffer.alloc(1536 * 1024, 1));
+  const r = changedBy(root, 'big1', () => put(root, 'big.bin', Buffer.alloc(1600 * 1024, 2)));
+  assert.deepEqual(r.changed, ['big.bin']);
 });

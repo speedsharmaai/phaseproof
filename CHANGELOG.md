@@ -2,8 +2,8 @@
 
 ## 0.3.0 - 2026-10-20
 
-- Shell guard: while code is closed, every Bash call is bracketed by a git snapshot and a diff. If the command changed or committed code, Claude is told which files and asked to undo them, and the owner gets a notice. Covers failing commands too (`PostToolUseFailure`)
-- phaseproof never changes or deletes a file for this. An automatic rollback was built first and dropped after two independent reviews found ways it could destroy uncommitted work
+- Shell guard: while code is closed, every Bash call is bracketed by a git snapshot and a diff. If the command changed, committed or wiped code, Claude is told which files and asked to stop and wait, and the owner gets a notice. Covers failing commands too (`PostToolUseFailure`)
+- phaseproof never changes or deletes a file for this, and never suggests a destructive fix. An automatic rollback and an "undo it" message were built first and dropped after independent reviews found ways each could destroy uncommitted work
 - `init` writes `.phaseproof/.gitignore`; older projects get it on the first snapshot
 
 ## 0.2.2 - 2026-10-20

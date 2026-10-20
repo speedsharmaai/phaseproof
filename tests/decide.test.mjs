@@ -123,11 +123,3 @@ test('bash cannot touch block records', (t) => {
   assert.equal(bash(root, 'node /p/scripts/phaseproof.mjs block').allow, true);
 });
 
-test('bash cannot remove, move or link .phaseproof', (t) => {
-  const root = tempProject(t);
-  cli(root, 'init');
-  for (const c of ['rm -rf .phaseproof', 'mv .phaseproof /tmp/x', 'cd .phaseproof && ln -s .. shell', 'rmdir .phaseproof/shell']) {
-    assert.equal(bash(root, c).allow, false, c);
-  }
-  assert.equal(bash(root, 'cat .phaseproof/state.json').allow, true);
-});

@@ -140,7 +140,8 @@ export function snapshot(root, id, { background = false } = {}) {
   const budget = hash ? { left: MAX_HASHED_TOTAL } : null;
   const entries = paths.map((rel) => describe(root, rel, budget));
   const file = snapshotFile(root, id);
-  writeFileSync(`${file}.tmp`, JSON.stringify({ at: new Date().toISOString(), head: state.head, docPaths, hash, entries }));
+  rmSync(`${file}.tmp`, { force: true });
+  writeFileSync(`${file}.tmp`, JSON.stringify({ at: new Date().toISOString(), head: state.head, docPaths, hash, entries }), { flag: 'wx' });
   renameSync(`${file}.tmp`, file);
   return true;
 }
@@ -154,7 +155,7 @@ function committedCode(root, state, docPaths, from) {
   if (!state.head) return [];
   const base = from ?? emptyTree(root);
   if (!base) return [];
-  const r = git(state.top, ['diff', '--name-only', '-z', base, state.head]);
+  const r = git(state.top, ['diff', '--name-only', '--no-renames', '-z', base, state.head]);
   if (r.status !== 0) return [];
   return toCode(state, docPaths, r.stdout.toString('utf8').split('\0').filter(Boolean));
 }
@@ -178,29 +179,26 @@ export function verify(root, id) {
     const prev = before.get(rel);
     return !prev || !same(prev, describe(root, rel, prev?.hash !== undefined ? budget : null));
   });
-  if (!changed.length && !committed.length) return null;
-  const hadWork = changed.filter((rel) => before.has(rel));
-  return { changed, committed, hadWork, headMoved: snap.head !== state.head };
+  const now = new Set(paths);
+  const discarded = [...before.keys()].filter((rel) => !now.has(rel)).sort();
+  if (!changed.length && !committed.length && !discarded.length) return null;
+  return { changed, committed, discarded, headMoved: snap.head !== state.head };
 }
 
 const list = (files) => files.slice(0, 10).join(', ') + (files.length > 10 ? ` and ${files.length - 10} more` : '');
 
 export function describeViolation(phaseReason, result) {
-  const hadWork = result.hadWork ?? [];
-  const fresh = result.changed.filter((rel) => !hadWork.includes(rel));
   const lines = [];
   if (result.changed.length) lines.push(`phaseproof: code changed during that shell command while code is closed: ${list(result.changed)}.`);
+  if (result.discarded?.length) lines.push(`phaseproof: uncommitted changes that existed before the command are gone now: ${list(result.discarded)}.`);
   if (result.committed.length) lines.push(`phaseproof: HEAD moved during that command (commit, reset or checkout), and the code it points to differs from before: ${list(result.committed)}.`);
-  lines.push('phaseproof did not touch any file.');
-  if (fresh.length) lines.push(`If you made these changes, undo them: ${list(fresh)} had no uncommitted changes before the command, so restore them from git or delete files you created.`);
-  if (hadWork.length) lines.push(`${list(hadWork)} already had the owner's uncommitted work before the command. Do not run git checkout, restore, reset, stash or clean on them; revert only the lines you changed, or ask the owner.`);
-  if (result.committed.length) lines.push('Do not rewrite history to undo the commit; tell the owner.');
-  lines.push('If you did not make a change, leave it alone and tell the owner.');
+  lines.push('phaseproof did not touch any file. Do not modify, restore, move or delete these files, and do not run git checkout, restore, reset, stash or clean to "fix" this.');
+  lines.push('Stop, tell the owner exactly what you ran, and wait for their decision.');
   lines.push(`Why code is closed: ${phaseReason.replace(/^phaseproof: /, '')}`);
   return lines.join(' ');
 }
 
 export function ownerNotice(result) {
-  const files = [...new Set([...result.changed, ...result.committed])];
-  return `phaseproof: a shell command changed code while the phase is closed (${list(files)}). Claude was told to undo it.`;
+  const files = [...new Set([...result.changed, ...(result.discarded ?? []), ...result.committed])];
+  return `phaseproof: a shell command changed code while the phase is closed (${list(files)}). Nothing was undone. Claude was asked to stop and wait for you.`;
 }
