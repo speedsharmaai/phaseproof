@@ -1,13 +1,13 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isDoc } from './decide.mjs';
-import { loadConfig, ppPath, readJson, sha256 } from './project.mjs';
+import { loadConfig, readJson, sha256 } from './project.mjs';
 
 const MAX_HASHED_BYTES = 1024 * 1024;
 const MAX_HASHED_FILES = 2000;
 const MAX_HASHED_TOTAL = 64 * 1024 * 1024;
-const OWN_FILE = /^[\w.-]+\.json(\.tmp)?$/;
+const OWN_FILE = /^[0-9a-f]{12}-[\w.-]+\.json(\.tmp)?$/;
 const SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
 
 const git = (cwd, args, input) =>
@@ -30,18 +30,16 @@ const isLink = (path) => {
   }
 };
 
-export function storageSafe(root) {
-  const base = ppPath(root);
-  if (!isRealDir(base)) return false;
-  const dir = snapshotDir(root);
-  if (existsSync(dir) || isLink(dir)) {
-    if (!isRealDir(dir)) return false;
-  }
-  return !isLink(ppPath(root, '.gitignore'));
+export function storeDir(root) {
+  const r = git(root, ['rev-parse', '--git-path', 'phaseproof']);
+  if (r.status !== 0) return null;
+  const dir = resolve(root, r.stdout.toString('utf8').trim());
+  if (existsSync(dir) || isLink(dir)) return isRealDir(dir) ? dir : null;
+  return dir;
 }
 
-const snapshotDir = (root) => ppPath(root, 'shell');
-const snapshotFile = (root, id) => join(snapshotDir(root), `${String(id).replace(/[^\w.-]/g, '_')}.json`);
+const projectKey = (root) => sha256(resolve(root)).slice(0, 12);
+const snapshotFile = (dir, root, id) => join(dir, `${projectKey(root)}-${String(id).replace(/[^\w.-]/g, '_')}.json`);
 
 function repoState(root) {
   const r = git(root, ['rev-parse', '--show-toplevel', '--show-prefix']);
@@ -116,30 +114,22 @@ function prune(dir) {
   }
 }
 
-function ensureIgnored(root) {
-  const file = ppPath(root, '.gitignore');
-  let text = '';
-  try {
-    text = readFileSync(file, 'utf8');
-  } catch {}
-  if (text.split(/\r?\n/).includes('shell/')) return;
-  writeFileSync(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}shell/\n`);
-}
-
 export function snapshot(root, id, { background = false } = {}) {
-  if (!id || background || !storageSafe(root)) return false;
+  if (!id || background) return false;
+  const dir = storeDir(root);
+  if (!dir) return false;
   const state = repoState(root);
   if (!state) return false;
   const { docPaths } = loadConfig(root);
   const paths = changedPaths(root, state, docPaths);
   if (!paths) return false;
-  mkdirSync(snapshotDir(root), { recursive: true });
-  ensureIgnored(root);
-  prune(snapshotDir(root));
+  mkdirSync(dir, { recursive: true });
+  if (!isRealDir(dir)) return false;
+  prune(dir);
   const hash = paths.length <= MAX_HASHED_FILES;
   const budget = hash ? { left: MAX_HASHED_TOTAL } : null;
   const entries = paths.map((rel) => describe(root, rel, budget));
-  const file = snapshotFile(root, id);
+  const file = snapshotFile(dir, root, id);
   rmSync(`${file}.tmp`, { force: true });
   writeFileSync(`${file}.tmp`, JSON.stringify({ at: new Date().toISOString(), head: state.head, docPaths, hash, entries }), { flag: 'wx' });
   renameSync(`${file}.tmp`, file);
@@ -161,8 +151,9 @@ function committedCode(root, state, docPaths, from) {
 }
 
 export function verify(root, id) {
-  if (!storageSafe(root)) return null;
-  const file = snapshotFile(root, id);
+  const dir = storeDir(root);
+  if (!dir) return null;
+  const file = snapshotFile(dir, root, id);
   if (isLink(file)) return null;
   const snap = readJson(file, null);
   rmSync(file, { force: true });
@@ -180,12 +171,14 @@ export function verify(root, id) {
     return !prev || !same(prev, describe(root, rel, prev?.hash !== undefined ? budget : null));
   });
   const now = new Set(paths);
-  const discarded = [...before.keys()].filter((rel) => !now.has(rel)).sort();
+  const discarded = [...before.keys()].filter((rel) => !now.has(rel) && !committed.includes(rel)).sort();
   if (!changed.length && !committed.length && !discarded.length) return null;
   return { changed, committed, discarded, headMoved: snap.head !== state.head };
 }
 
 const list = (files) => files.slice(0, 10).join(', ') + (files.length > 10 ? ` and ${files.length - 10} more` : '');
+
+const shortReason = (reason) => `${reason.replace(/^phaseproof: /, '').split(/\.\s/)[0].replace(/\.$/, '')}.`;
 
 export function describeViolation(phaseReason, result) {
   const lines = [];
@@ -194,11 +187,14 @@ export function describeViolation(phaseReason, result) {
   if (result.committed.length) lines.push(`phaseproof: HEAD moved during that command (commit, reset or checkout), and the code it points to differs from before: ${list(result.committed)}.`);
   lines.push('phaseproof did not touch any file. Do not modify, restore, move or delete these files, and do not run git checkout, restore, reset, stash or clean to "fix" this.');
   lines.push('Stop, tell the owner exactly what you ran, and wait for their decision.');
-  lines.push(`Why code is closed: ${phaseReason.replace(/^phaseproof: /, '')}`);
+  lines.push(`Code is closed because ${shortReason(phaseReason)}`);
   return lines.join(' ');
 }
 
 export function ownerNotice(result) {
-  const files = [...new Set([...result.changed, ...(result.discarded ?? []), ...result.committed])];
-  return `phaseproof: a shell command changed code while the phase is closed (${list(files)}). Nothing was undone. Claude was asked to stop and wait for you.`;
+  const parts = [];
+  if (result.changed.length) parts.push(`changed ${list(result.changed)}`);
+  if (result.discarded?.length) parts.push(`wiped uncommitted changes in ${list(result.discarded)}`);
+  if (result.committed.length) parts.push(`moved HEAD so ${list(result.committed)} differ`);
+  return `phaseproof: while the phase is closed, a shell command ${parts.join('; ')}. phaseproof did not touch any file. Claude was asked to stop and wait for you.`;
 }

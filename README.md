@@ -114,7 +114,6 @@ your-project/
     ├── approvals/                owner sign-offs
     ├── runs/                     last check results
     ├── blocks/                   phases stopped after two failed reviews
-    ├── shell/                    short-lived snapshots around Bash calls (gitignored)
     └── gates/                    closed phases, with check results and review hashes
 ```
 
@@ -123,7 +122,7 @@ Commit `.phaseproof/` with the code. The approvals and gates are the audit trail
 ## What it runs and sends
 
 - The hook runs `node ${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs` before file edits and Bash calls. It reads files under `.phaseproof/` in your project and prints an allow or deny decision. It makes no network calls.
-- While code is closed, `scripts/hook.mjs` and `scripts/post.mjs` run `git status`, `git rev-parse` and `git diff --name-only` around Bash calls to find shell writes to code. They write only under `.phaseproof/shell/` (paths and hashes, no file contents) and never change your files.
+- While code is closed, `scripts/hook.mjs` and `scripts/post.mjs` run `git status`, `git rev-parse` and `git diff --name-only` around Bash calls to find shell writes to code. They write only short-lived records to `.git/phaseproof/` (paths, sizes, hashes, no file contents) and never change your files.
 - `scripts/phaseproof.mjs` reads and writes files under `.phaseproof/`, and runs `git rev-parse HEAD` to record the commit.
 - `check` and `gate` run the commands you list in `.phaseproof/config.json` (your tests, typecheck, lint) through your shell, in your project directory. Nothing else is executed.
 - No telemetry, no data leaves your machine, no packages are downloaded. The researcher and ship-verifier agents use Claude's own WebSearch and WebFetch tools when a skill asks them to.

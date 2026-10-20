@@ -1,13 +1,12 @@
 import { closedReason } from './lib/decide.mjs';
 import { isMain } from './lib/main.mjs';
-import { isActive } from './lib/project.mjs';
 import { describeViolation, ownerNotice, verify } from './lib/shell.mjs';
 
 export function respond(raw, projectDir = process.env.CLAUDE_PROJECT_DIR) {
   try {
     const input = JSON.parse(raw);
     const root = projectDir || input.cwd;
-    if (input.tool_name !== 'Bash' || !isActive(root)) return '';
+    if (input.tool_name !== 'Bash') return '';
     const result = verify(root, input.tool_use_id);
     if (!result) return '';
     const reason = closedReason(root) ?? 'the phase was closed when the command started.';

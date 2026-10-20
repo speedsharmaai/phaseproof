@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describeViolation, dirtyCodeFiles, ownerNotice, snapshot, verify } from '../scripts/lib/shell.mjs';
+import { describeViolation, dirtyCodeFiles, ownerNotice, snapshot, storeDir, verify } from '../scripts/lib/shell.mjs';
 import { respond as pre } from '../scripts/hook.mjs';
 import { respond as post } from '../scripts/post.mjs';
 import { approvedProject, cli, put, tempProject } from './helpers.mjs';
@@ -28,10 +28,6 @@ const changedBy = (root, id, act) => {
   act();
   return verify(root, id);
 };
-
-test('init ignores snapshots', (t) => {
-  assert.equal(read(closedRepo(t), '.phaseproof/.gitignore'), 'shell/\n');
-});
 
 test('dirtyCodeFiles skips docs, markdown and phaseproof records, and parses renames', (t) => {
   const root = closedRepo(t);
@@ -141,22 +137,6 @@ test('many dirty files fall back to size and mtime', (t) => {
   assert.ok(Date.now() - started < 8000);
 });
 
-test('background commands are not snapshotted; corrupt snapshots are dropped', (t) => {
-  const root = closedRepo(t);
-  assert.equal(snapshot(root, 'b1', { background: true }), false);
-  put(root, '.phaseproof/shell/bad.json', '{"entries":');
-  assert.equal(verify(root, 'bad'), null);
-  assert.equal(existsSync(join(root, '.phaseproof/shell/bad.json')), false);
-});
-
-test('projects from 0.2 get the gitignore on first snapshot, existing lines kept', (t) => {
-  const root = closedRepo(t);
-  writeFileSync(join(root, '.phaseproof/.gitignore'), 'custom/\n');
-  snapshot(root, 'i1');
-  assert.equal(read(root, '.phaseproof/.gitignore'), 'custom/\nshell/\n');
-  assert.equal(readdirSync(join(root, '.phaseproof/shell')).filter((n) => n.endsWith('.tmp')).length, 0);
-});
-
 test('hooks end to end: closed phase reports to Claude and the owner, open phase stays quiet', (t) => {
   const root = closedRepo(t);
   const input = (id, event) => JSON.stringify({ cwd: root, hook_event_name: event, tool_name: 'Bash', tool_use_id: id, tool_input: { command: 'x' } });
@@ -167,7 +147,7 @@ test('hooks end to end: closed phase reports to Claude and the owner, open phase
   assert.match(out.reason, /code changed during that shell command while code is closed: src\/a\.js/);
   assert.match(out.reason, /did not touch any file/);
   assert.match(out.reason, /Stop, tell the owner/);
-  assert.match(out.systemMessage, /Nothing was undone\. Claude was asked to stop and wait for you/);
+  assert.match(out.systemMessage, /a shell command changed src\/a\.js\. phaseproof did not touch any file\. Claude was asked to stop and wait for you/);
 
   pre(input('e2', 'PreToolUse'), root);
   put(root, 'src/a.js', 'y\n');
@@ -181,10 +161,6 @@ test('hooks end to end: closed phase reports to Claude and the owner, open phase
   pre(ob, open);
   put(open, 'src/b.js', 'fine\n');
   assert.equal(post(ob, open), '');
-});
-
-test('owner notice lists every file once', () => {
-  assert.match(ownerNotice({ changed: ['a.js'], committed: ['a.js', 'b.js'] }), /\(a\.js, b\.js\)/);
 });
 
 test('post hook runs as a process and fails open', () => {
@@ -203,39 +179,6 @@ test('a dirty file returned to its committed version is reported as discarded wo
   assert.match(describeViolation('closed', r), /uncommitted changes that existed before the command are gone now: src\/a\.js/);
 });
 
-test('a symlinked snapshot folder or gitignore turns the guard off instead of writing through it', { skip: process.platform === 'win32' }, (t) => {
-  const root = closedRepo(t);
-  put(root, '.env', 'SECRET=1\n');
-  const old = new Date(Date.now() - 48 * 3600 * 1000);
-  for (const f of ['.env', 'README.md', 'src/a.js']) utimesSync(join(root, f), old, old);
-  rmSync(join(root, '.phaseproof/shell'), { recursive: true, force: true });
-  symlinkSync('..', join(root, '.phaseproof/shell'));
-  assert.equal(snapshot(root, 'x1'), false);
-  assert.equal(verify(root, 'x1'), null);
-  for (const f of ['.env', 'README.md', 'src/a.js']) assert.equal(existsSync(join(root, f)), true, f);
-
-  const other = closedRepo(t);
-  put(other, 'src/conf.txt', 'conf\n');
-  rmSync(join(other, '.phaseproof/.gitignore'));
-  symlinkSync('../src/conf.txt', join(other, '.phaseproof/.gitignore'));
-  assert.equal(snapshot(other, 'x2'), false);
-  assert.equal(read(other, 'src/conf.txt'), 'conf\n');
-});
-
-test('prune only removes its own old snapshot files', (t) => {
-  const root = closedRepo(t);
-  mkdirSync(join(root, '.phaseproof/shell'), { recursive: true });
-  put(root, '.phaseproof/shell/old.json', '{}');
-  put(root, '.phaseproof/shell/keep-me.txt', 'not ours');
-  put(root, '.phaseproof/shell/fresh.json', '{}');
-  const old = new Date(Date.now() - 48 * 3600 * 1000);
-  utimesSync(join(root, '.phaseproof/shell/old.json'), old, old);
-  utimesSync(join(root, '.phaseproof/shell/keep-me.txt'), old, old);
-  snapshot(root, 'pr1');
-  const left = readdirSync(join(root, '.phaseproof/shell')).sort();
-  assert.deepEqual(left, ['fresh.json', 'keep-me.txt', 'pr1.json']);
-});
-
 test('moving owner work is reported on both paths and the message never advises a destructive fix', (t) => {
   const root = closedRepo(t);
   put(root, 'src/owner-new.js', 'only copy\n');
@@ -248,22 +191,6 @@ test('moving owner work is reported on both paths and the message never advises 
   const m = describeViolation('closed', r);
   assert.match(m, /Do not modify, restore, move or delete these files/);
   assert.doesNotMatch(m, /undo them|delete files you created|restore them from git/);
-});
-
-test('a symlink planted at the temp snapshot name is not written through', { skip: process.platform === 'win32' }, (t) => {
-  const root = closedRepo(t);
-  mkdirSync(join(root, '.phaseproof/shell'), { recursive: true });
-  symlinkSync('../../src/a.js', join(root, '.phaseproof/shell/j1.json.tmp'));
-  assert.equal(snapshot(root, 'j1'), true);
-  assert.equal(read(root, 'src/a.js'), 'original\n');
-});
-
-test('init never writes through a gitignore link', { skip: process.platform === 'win32' }, (t) => {
-  const root = tempProject(t);
-  mkdirSync(join(root, '.phaseproof'), { recursive: true });
-  symlinkSync('../src/new.js', join(root, '.phaseproof/.gitignore'));
-  assert.equal(cli(root, 'init').code, 0);
-  assert.equal(existsSync(join(root, 'src/new.js')), false);
 });
 
 test('a committed rename reports both paths', (t) => {
@@ -280,4 +207,98 @@ test('files over 1 MB are compared by size and mtime', (t) => {
   put(root, 'big.bin', Buffer.alloc(1536 * 1024, 1));
   const r = changedBy(root, 'big1', () => put(root, 'big.bin', Buffer.alloc(1600 * 1024, 2)));
   assert.deepEqual(r.changed, ['big.bin']);
+});
+
+test('snapshots live inside .git, so git clean and stash cannot silence the report', (t) => {
+  const root = closedRepo(t);
+  assert.ok(storeDir(root).endsWith(join('.git', 'phaseproof')));
+  put(root, 'src/owner.js', 'untracked owner work\n');
+  const clean = changedBy(root, 'c1', () => git(root, 'clean', '-fdxq'));
+  assert.deepEqual(clean.discarded, ['src/owner.js']);
+  put(root, 'src/owner.js', 'again\n');
+  put(root, 'src/a.js', 'edit\n');
+  const stash = changedBy(root, 'c2', () => git(root, 'stash', '-a', '-q'));
+  assert.deepEqual(stash.discarded, ['src/a.js', 'src/owner.js']);
+});
+
+test('the report survives the command deleting .phaseproof itself', (t) => {
+  const root = tempProject(t);
+  git(root, 'init', '-q');
+  put(root, 'src/a.js', 'original\n');
+  git(root, 'add', 'src');
+  git(root, 'commit', '-qm', 'init');
+  cli(root, 'init');
+  put(root, 'src/owner.js', 'untracked\n');
+  const id = JSON.stringify({ cwd: root, tool_name: 'Bash', tool_use_id: 'gc1', tool_input: { command: 'git clean -fd' } });
+  pre(id, root);
+  git(root, 'clean', '-fdq');
+  assert.equal(existsSync(join(root, '.phaseproof')), false);
+  const out = JSON.parse(post(id, root));
+  assert.match(out.reason, /gone now: src\/owner\.js/);
+});
+
+test('a symlinked store turns the guard off and deletes nothing', { skip: process.platform === 'win32' }, (t) => {
+  const root = closedRepo(t);
+  const old = new Date(Date.now() - 48 * 3600 * 1000);
+  utimesSync(join(root, 'src/a.js'), old, old);
+  rmSync(join(root, '.git/phaseproof'), { recursive: true, force: true });
+  symlinkSync(join(root, 'src'), join(root, '.git/phaseproof'));
+  assert.equal(storeDir(root), null);
+  assert.equal(snapshot(root, 'x1'), false);
+  assert.equal(verify(root, 'x1'), null);
+  assert.equal(read(root, 'src/a.js'), 'original\n');
+});
+
+test('prune only removes its own old snapshot files, and corrupt snapshots are dropped', (t) => {
+  const root = closedRepo(t);
+  snapshot(root, 'seed');
+  const dir = storeDir(root);
+  const mine = readdirSync(dir).find((n) => n.endsWith('-seed.json'));
+  const key = mine.slice(0, 12);
+  put(dir, `${key}-old.json`, '{}');
+  put(dir, 'keep-me.json', 'not ours');
+  const old = new Date(Date.now() - 48 * 3600 * 1000);
+  utimesSync(join(dir, `${key}-old.json`), old, old);
+  utimesSync(join(dir, 'keep-me.json'), old, old);
+  snapshot(root, 'pr1');
+  assert.deepEqual(readdirSync(dir).sort(), [`${key}-pr1.json`, `${key}-seed.json`, 'keep-me.json'].sort());
+  put(dir, `${key}-bad.json`, '{"entries":');
+  assert.equal(verify(root, 'bad'), null);
+  assert.equal(existsSync(join(dir, `${key}-bad.json`)), false);
+  assert.equal(snapshot(root, 'b1', { background: true }), false);
+});
+
+test('a symlink or hardlink planted at the temp snapshot name is never written through', { skip: process.platform === 'win32' }, (t) => {
+  const root = closedRepo(t);
+  snapshot(root, 'seed');
+  const dir = storeDir(root);
+  const key = readdirSync(dir)[0].slice(0, 12);
+  symlinkSync(join(root, 'src/a.js'), join(dir, `${key}-j1.json.tmp`));
+  linkSync(join(root, 'README.md'), join(dir, `${key}-j2.json.tmp`));
+  assert.equal(snapshot(root, 'j1'), true);
+  assert.equal(snapshot(root, 'j2'), true);
+  assert.equal(read(root, 'src/a.js'), 'original\n');
+  assert.equal(read(root, 'README.md'), '# x\n');
+});
+
+test('owner work committed by the shell is reported once, as committed', (t) => {
+  const root = closedRepo(t);
+  put(root, 'src/a.js', 'owner work\n');
+  const r = changedBy(root, 'oc1', () => git(root, 'commit', '-qam', 'took it'));
+  assert.deepEqual(r.discarded, []);
+  assert.deepEqual(r.committed, ['src/a.js']);
+});
+
+test('the owner notice says what happened to their work', () => {
+  const n = ownerNotice({ changed: [], discarded: ['src/a.js'], committed: [] });
+  assert.match(n, /wiped uncommitted changes in src\/a\.js/);
+  assert.match(n, /phaseproof did not touch any file/);
+  assert.doesNotMatch(ownerNotice({ changed: ['b.js'], discarded: [], committed: [] }), /wiped/);
+});
+
+test('the message gives no next step beyond stopping', (t) => {
+  const r = { changed: ['src/a.js'], discarded: [], committed: [] };
+  const m = describeViolation('phaseproof: phase 01 is not approved, so code stays closed. Finish and review the phase docs, then the owner runs /phaseproof:approve 01.', r);
+  assert.match(m, /Code is closed because phase 01 is not approved, so code stays closed\.$/);
+  assert.doesNotMatch(m, /Finish and review/);
 });

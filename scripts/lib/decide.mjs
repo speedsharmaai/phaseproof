@@ -3,7 +3,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { approvalFile, blockFile, gateFile, isActive, loadConfig, loadState, scopeChanged } from './project.mjs';
 
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
-const PROTECTED_IN_BASH = /\.phaseproof[\\/]+(gates|approvals|runs|blocks|shell)\b/;
+const PROTECTED_IN_BASH = /\.phaseproof[\\/]+(gates|approvals|runs|blocks)\b/;
 const APPROVE_IN_BASH = /phaseproof\.mjs["']?\s+approve\b/;
 const WRITABLE_STATE = ['.phaseproof/reviews/', '.phaseproof/config.json'];
 

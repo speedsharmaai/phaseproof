@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { allPassed, runChecks } from './lib/checks.mjs';
 import { isMain } from './lib/main.mjs';
@@ -74,9 +74,6 @@ const commands = {
     writeJson(ppPath(root, 'config.json'), { ...loadConfig(root), checks });
     writeJson(ppPath(root, 'state.json'), { version: 1, phase });
     for (const d of ['reviews', 'approvals', 'gates', 'runs', 'blocks']) mkdirSync(ppPath(root, d), { recursive: true });
-    try {
-      writeFileSync(ppPath(root, '.gitignore'), 'shell/\n', { flag: 'wx' });
-    } catch {}
     out(`tracking started at phase ${phase}${checks.length ? '' : '. Add your test/typecheck commands to .phaseproof/config.json'}`);
   },
 

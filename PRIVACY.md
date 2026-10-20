@@ -11,9 +11,10 @@ Only files inside your project, under `.phaseproof/`:
 - `reviews/`: reviewer reports written during a session
 - `approvals/` and `gates/`: timestamps, the git commit hash, check exit codes and hashes of the review files
 - `runs/`: the last output lines of your check commands
-- `shell/`: short-lived snapshots around shell commands while code is closed, holding file paths, sizes, modification times, hashes and symlink targets, never file contents. Gitignored and removed after each command; a record left by a command that never ran is pruned by a later snapshot once it is a day old.
 
 None of these contain names, emails or other personal data unless you put them there. You can delete the folder at any time.
+
+Outside `.phaseproof/`, it writes only short-lived records to `.git/phaseproof/` while code is closed: file paths, sizes, modification times, hashes and symlink targets around each shell command, never file contents. Each record is removed after its command; one left by a command that never ran is pruned once it is a day old.
 
 ## What it sends
 

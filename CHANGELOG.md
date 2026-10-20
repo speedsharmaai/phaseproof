@@ -4,7 +4,7 @@
 
 - Shell guard: while code is closed, every Bash call is bracketed by a git snapshot and a diff. If the command changed, committed or wiped code, Claude is told which files and asked to stop and wait, and the owner gets a notice. Covers failing commands too (`PostToolUseFailure`)
 - phaseproof never changes or deletes a file for this, and never suggests a destructive fix. An automatic rollback and an "undo it" message were built first and dropped after independent reviews found ways each could destroy uncommitted work
-- `init` writes `.phaseproof/.gitignore`; older projects get it on the first snapshot
+- Snapshots live in `.git/phaseproof/`, outside the working tree, so `git clean` and `git stash` cannot remove them and nothing is added to your project
 
 ## 0.2.2 - 2026-10-20
 
