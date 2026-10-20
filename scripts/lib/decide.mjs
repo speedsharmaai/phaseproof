@@ -3,7 +3,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { approvalFile, blockFile, gateFile, isActive, loadConfig, loadState, scopeChanged } from './project.mjs';
 
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
-const PROTECTED_IN_BASH = /\.phaseproof[\\/]+(gates|approvals|runs|blocks)\b/;
+const PROTECTED_IN_BASH = /\.phaseproof[\\/]+(gates|approvals|runs|blocks|shell)\b/;
 const APPROVE_IN_BASH = /phaseproof\.mjs["']?\s+approve\b/;
 const WRITABLE_STATE = ['.phaseproof/reviews/', '.phaseproof/config.json'];
 
@@ -16,7 +16,7 @@ export function toProjectPath(root, file) {
   return rel.split(sep).join('/');
 }
 
-const isDoc = (rel, docPaths) =>
+export const isDoc = (rel, docPaths) =>
   rel.toLowerCase().endsWith('.md') || docPaths.some((p) => rel === p.replace(/\/$/, '') || rel.startsWith(p));
 
 export function decide({ root, toolName, toolInput = {} }) {
@@ -42,19 +42,24 @@ export function decide({ root, toolName, toolInput = {} }) {
 
   if (isDoc(rel, loadConfig(root).docPaths)) return allow;
 
+  const reason = closedReason(root);
+  return reason ? deny(reason) : allow;
+}
+
+export function closedReason(root) {
   const phase = loadState(root)?.phase;
-  if (!phase) return deny('.phaseproof/state.json has no current phase. Run /phaseproof:status.');
+  if (!phase) return '.phaseproof/state.json has no current phase. Run /phaseproof:status.';
   if (!existsSync(approvalFile(root, phase))) {
-    return deny(`phase ${phase} is not approved, so code stays closed. Finish and review the phase docs, then the owner runs /phaseproof:approve ${phase}.`);
+    return `phase ${phase} is not approved, so code stays closed. Finish and review the phase docs, then the owner runs /phaseproof:approve ${phase}.`;
   }
   if (existsSync(blockFile(root, phase))) {
-    return deny(`phase ${phase} is blocked after two failed code reviews. The owner decides: fix the scope and re-review it, or run /phaseproof:approve ${phase} to give the builder another round.`);
+    return `phase ${phase} is blocked after two failed code reviews. The owner decides: fix the scope and re-review it, or run /phaseproof:approve ${phase} to give the builder another round.`;
   }
   if (scopeChanged(root, phase)) {
-    return deny(`phase ${phase} scope changed after it was approved. Get the docs reviewed again, then the owner runs /phaseproof:approve ${phase}.`);
+    return `phase ${phase} scope changed after it was approved. Get the docs reviewed again, then the owner runs /phaseproof:approve ${phase}.`;
   }
   if (existsSync(gateFile(root, phase))) {
-    return deny(`phase ${phase} already passed its gate. Plan the next phase and get it approved before more code.`);
+    return `phase ${phase} already passed its gate. Plan the next phase and get it approved before more code.`;
   }
-  return allow;
+  return null;
 }

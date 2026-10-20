@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 - 2026-10-20
+
+- Shell guard: while code is closed, Bash calls are bracketed by a git snapshot and a diff. Code files a shell command changed are rolled back and quarantined, and Claude is told why. Uncommitted work from before the command is restored, not wiped
+- `shellGuard` config: `revert` (default), `warn`, `off`
+- `init` writes `.phaseproof/.gitignore` for snapshots and quarantine
+
 ## 0.2.2 - 2026-10-20
 
 - Every agent gets a senior role and user-first checks: first five seconds, one primary action, plain copy, useful empty and error states, contrast and tap targets, failure behaviour the user sees, slow paths

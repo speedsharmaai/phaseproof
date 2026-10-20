@@ -84,10 +84,11 @@ When `.phaseproof/state.json` exists in a project, a `PreToolUse` hook:
 - closes code when a phase is blocked after two failed code reviews, until the owner approves it again
 - always allows Markdown, `docs/`, `phases/` and `design/`
 - blocks writes to `.phaseproof/gates`, `approvals`, `runs` and `blocks`, by file tools or by Bash, and blocks running `approve` from Bash
+- catches shell writes: while code is closed, a `PreToolUse` hook snapshots `git status` before every Bash call and a `PostToolUse` hook diffs it after. Code files the command changed are rolled back, the shell's version is saved under `.phaseproof/quarantine/`, and Claude is told what happened and why. Uncommitted work from before the command is put back as it was, not wiped. Set `"shellGuard": "warn"` in `.phaseproof/config.json` to report without rolling back, or `"off"` to disable
 
 In any project without `.phaseproof/state.json` it does nothing. If the hook gets input it cannot parse, it allows the call rather than locking your session.
 
-It is a guardrail against drift, not a security boundary. A determined agent can still write code through a shell command, and a review report is model output like any other. What it reliably stops is the common failure: an agent that skips the plan, skips the review, or calls a phase done with red tests.
+It is a guardrail against drift, not a security boundary. The shell guard detects and undoes writes after the fact; it does not prevent them. It only sees files git sees, so gitignored paths, files outside the project, network calls and running processes are out of its reach. For real prevention, use an OS-level sandbox. A review report is model output like any other. What it reliably stops is the common failure: an agent that skips the plan, skips the review, or calls a phase done with red tests.
 
 ## What it writes in your project
 
@@ -113,6 +114,7 @@ your-project/
     ├── approvals/                owner sign-offs
     ├── runs/                     last check results
     ├── blocks/                   phases stopped after two failed reviews
+    ├── quarantine/               shell writes that were rolled back (gitignored)
     └── gates/                    closed phases, with check results and review hashes
 ```
 
@@ -121,6 +123,7 @@ Commit `.phaseproof/` with the code. The approvals and gates are the audit trail
 ## What it runs and sends
 
 - The hook runs `node ${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs` before file edits and Bash calls. It reads files under `.phaseproof/` in your project and prints an allow or deny decision. It makes no network calls.
+- While code is closed, `scripts/hook.mjs` and `scripts/post.mjs` run `git status`, `git cat-file` and `git checkout HEAD -- <file>` around Bash calls to find and roll back shell writes to code. They write only under `.phaseproof/shell/` and `.phaseproof/quarantine/`.
 - `scripts/phaseproof.mjs` reads and writes files under `.phaseproof/`, and runs `git rev-parse HEAD` to record the commit.
 - `check` and `gate` run the commands you list in `.phaseproof/config.json` (your tests, typecheck, lint) through your shell, in your project directory. Nothing else is executed.
 - No telemetry, no data leaves your machine, no packages are downloaded. The researcher and ship-verifier agents use Claude's own WebSearch and WebFetch tools when a skill asks them to.
@@ -136,7 +139,7 @@ No server, no telemetry, nothing collected. See [PRIVACY.md](PRIVACY.md).
 
 ## Status
 
-v0.2.2. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
+v0.3.0. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
 
 ## Related projects
 
