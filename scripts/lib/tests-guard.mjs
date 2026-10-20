@@ -64,7 +64,7 @@ const run = (root, pathspecMode, args, input) =>
 const git = (root, args, input) => run(root, '--literal-pathspecs', args, input);
 const gitGlob = (root, args) => run(root, '--glob-pathspecs', args);
 
-const TEST_GLOBS = [
+export const TEST_GLOBS = [
   '**/test/**', '**/tests/**', '**/__tests__/**', '**/spec/**',
   '**/*.test.*', '**/*.spec.*', '**/*.cy.*', '**/*_test.*', '**/*_spec.*',
   '**/test_*.py', '**/tests.py', '**/conftest.py',
@@ -182,8 +182,11 @@ function skipsSince(root, base) {
   const diff = gitGlob(root, ['diff', ...DIFF, '-M75%', '-U0', base, '--', ...TEST_GLOBS]);
   const skipped = [];
   let file = null;
+  let prev = '';
   for (const line of diff.status === 0 ? diff.stdout.split('\n') : []) {
-    if (line.startsWith('+++ ')) file = parsePlusPath(line);
+    const header = line.startsWith('+++ ') && prev.startsWith('--- ');
+    prev = line;
+    if (header) file = parsePlusPath(line);
     else if (file && watched(file) && line.startsWith('+') && isSkipLine(file, line.slice(1))) skipped.push({ file, line: line.slice(1).trim().slice(0, 120) });
   }
   const fresh = (untracked ?? []).filter(watched);
@@ -203,7 +206,7 @@ function skipsSince(root, base) {
 }
 
 export function testTampering(root, base, allowList = '') {
-  if (!base) return null;
+  if (base === null || base === undefined) return null;
   if (typeof base !== 'string' || !/^[0-9a-f]{7,64}$/.test(base)) return { unchecked: 'the approval has no valid base commit; /phaseproof:approve NN --new-base records one' };
   if (git(root, ['rev-parse', '--git-dir']).status !== 0) return { unchecked: 'git is not available here, or this folder is no longer a git repository' };
   if (git(root, ['cat-file', '-e', `${base}^{commit}`]).status !== 0) return { unverifiable: base };

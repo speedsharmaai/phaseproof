@@ -126,6 +126,6 @@ export function scopeChanged(root, phase) {
 }
 
 export function gitHead(root) {
-  const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
+  const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 20000 });
   return r.status === 0 ? r.stdout.trim() : null;
 }

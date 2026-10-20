@@ -16,7 +16,7 @@ None of these contain names, emails or other personal data unless you put them t
 
 Outside `.phaseproof/`, it writes only short-lived records to `phaseproof/` inside the git directory (`.git/phaseproof/`, or the worktree's or submodule's git dir) while code is closed: file paths, sizes, modification times, hashes and symlink targets around each shell command, never file contents. Each record is removed after its command. A record left by a command that never ran (denied or interrupted) is pruned by a later snapshot in the same repository once it is a day old.
 
-At gate time it only reads git history and your working tree; it writes nothing.
+At gate time the test comparison only reads git history and your working tree; the gate itself writes its record under `.phaseproof/gates/` and runs the check commands you configured.
 
 ## What it sends
 

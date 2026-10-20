@@ -120,7 +120,7 @@ const commands = {
     const run = readJson(runFile(root, phase), null);
     const approved = existsSync(approvalFile(root, phase));
     const block = readJson(blockFile(root, phase), null);
-    const size = readJson(approvalFile(root, phase), {}).size;
+    const size = (readJson(approvalFile(root, phase), {}) ?? {}).size;
     const lines = [
       `phase ${phase}${dir ? ` (${dir.split(/[\\/]/).pop()})` : ' (no phase folder yet)'}${size === 'quick' ? ', approved as quick' : ''}`,
       `  docs review  ${docs.pass ? 'pass' : size === 'quick' ? `skipped, the owner approved it as quick (${docs.reason})` : docs.reason}`,
@@ -177,7 +177,7 @@ const commands = {
     requireOneFolder(root, phase);
     if (existsSync(blockFile(root, phase))) refuse(`phase ${phase} is blocked. The owner has to approve it again first`);
     if (scopeChanged(root, phase)) refuse(`phase ${phase} scope changed since approval. Review it and approve again`);
-    const approval = readJson(approvalFile(root, phase), {});
+    const approval = (readJson(approvalFile(root, phase), {}) ?? {});
     const docs = approval.size === 'quick' ? readText(reviewFile(root, phase, 'docs')) : requireReview(root, phase, 'docs');
     const code = requireReview(root, phase, 'code');
     const warnings = testWarnings(root, phase, approval);

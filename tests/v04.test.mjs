@@ -5,7 +5,7 @@ import { chmodSync, existsSync, renameSync, rmSync, symlinkSync } from 'node:fs'
 import { decide } from '../scripts/lib/decide.mjs';
 import { join } from 'node:path';
 import { approvalFile, gateFile, readJson, scopeField, scopeList } from '../scripts/lib/project.mjs';
-import { isSkipLine, isTestFile, testTampering } from '../scripts/lib/tests-guard.mjs';
+import { isSkipLine, isTestFile, TEST_GLOBS, testTampering } from '../scripts/lib/tests-guard.mjs';
 import { context, respond } from '../scripts/session.mjs';
 import { cli, PASS, put, tempProject } from './helpers.mjs';
 
@@ -403,4 +403,47 @@ test('a big codemod across many test files neither crashes nor falsely refuses',
 
 test('none on the Removes tests line keeps later bullets out', () => {
   assert.deepEqual(scopeList('**Removes tests:** none\n\n- left for later\n', 'Removes tests'), []);
+});
+
+test('every path isTestFile accepts is inside the git globs the guard diffs', (t) => {
+  const root = tempProject(t);
+  git(root, 'init', '-q');
+  const dirs = ['', 'src/', 'pkg/a/', 'tests/', 'test/', '__tests__/', 'spec/', 'src/test/java/com/x/', 'e2e/'];
+  const names = ['a.test.js', 'a.spec.tsx', 'a.cy.ts', 'a_test.go', 'a_test.py', 'a_spec.rb', 'a_test.rb', 'mod_test.ts', 'test_api.py', 'tests.py', 'conftest.py', 'FooTest.java', 'FooTests.cs', 'UserSpec.kt', 'OrderIT.java', 'helper.js', 'lib.rs', 'util.py', 'a.rb'];
+  const paths = dirs.flatMap((d) => names.map((n) => d + n));
+  const lines = paths.map((p) => `100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391\t${p}`).join('\n') + '\n';
+  spawnSync('git', ['update-index', '--add', '--index-info'], { cwd: root, input: lines });
+  const listed = new Set(spawnSync('git', ['--glob-pathspecs', 'ls-files', '-z', '--', ...TEST_GLOBS], { cwd: root, encoding: 'utf8' }).stdout.split('\0'));
+  const missing = paths.filter((p) => isTestFile(p) && !listed.has(p));
+  assert.deepEqual(missing, []);
+});
+
+test('falsy and malformed bases warn instead of passing silently; a null approval does not crash', (t) => {
+  const root = project(t);
+  for (const base of ['', 0, false, 12345]) assert.match(testTampering(root, base).unchecked, /no valid base commit/);
+  cli(root, 'approve', '--quick');
+  passCode(root);
+  put(root, '.phaseproof/approvals/phase-01.json', 'null');
+  assert.doesNotThrow(() => cli(root, 'status'));
+  assert.doesNotThrow(() => cli(root, 'gate'));
+});
+
+test('an added line that looks like a diff header does not hide a skip', (t) => {
+  const root = project(t);
+  const head = git(root, 'rev-parse', 'HEAD').stdout.trim();
+  put(root, 'src/a.test.js', 'test("a", () => {});\n++ b/x.md\ntest.skip("b", () => {});\n');
+  assert.deepEqual(testTampering(root, head).skipped.map((s) => s.file), ['src/a.test.js']);
+});
+
+test('more than 50 test warnings are capped', (t) => {
+  const root = project(t);
+  for (let i = 0; i < 60; i++) put(root, `tests/t${i}.test.js`, `test("${i}", () => { expect(${i}).toBe(${i}); });\n`);
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'many');
+  cli(root, 'approve', '--quick', '--new-base');
+  passCode(root);
+  for (let i = 0; i < 60; i++) rmSync(join(root, `tests/t${i}.test.js`));
+  const out = cli(root, 'gate').out;
+  assert.match(out, /and 10 more/);
+  assert.equal(readJson(gateFile(root, '01')).testWarnings.length, 51);
 });
