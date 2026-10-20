@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, linkSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
+import { existsSync, linkSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describeViolation, dirtyCodeFiles, ownerNotice, snapshot, storeDir, verify } from '../scripts/lib/shell.mjs';
@@ -291,7 +291,7 @@ test('owner work committed by the shell is reported once, as committed', (t) => 
 
 test('the owner notice says what happened to their work', () => {
   const n = ownerNotice({ changed: [], discarded: ['src/a.js'], committed: [] });
-  assert.match(n, /wiped uncommitted changes in src\/a\.js/);
+  assert.match(n, /wiped your uncommitted changes in src\/a\.js/);
   assert.match(n, /phaseproof did not touch any file/);
   assert.doesNotMatch(ownerNotice({ changed: ['b.js'], discarded: [], committed: [] }), /wiped/);
 });
@@ -301,4 +301,39 @@ test('the message gives no next step beyond stopping', (t) => {
   const m = describeViolation('phaseproof: phase 01 is not approved, so code stays closed. Finish and review the phase docs, then the owner runs /phaseproof:approve 01.', r);
   assert.match(m, /Code is closed because phase 01 is not approved, so code stays closed\.$/);
   assert.doesNotMatch(m, /Finish and review/);
+});
+
+test('owner work destroyed by a reset or forced checkout is reported as wiped, not just as a HEAD move', (t) => {
+  const root = closedRepo(t);
+  put(root, 'src/a.js', 'v2\n');
+  git(root, 'commit', '-qam', 'v2');
+  put(root, 'src/a.js', 'OWNER WORK\n');
+  const r = changedBy(root, 'rh1', () => git(root, 'reset', '-q', '--hard', 'HEAD~1'));
+  assert.deepEqual(r.discarded, ['src/a.js']);
+  assert.match(ownerNotice(r), /wiped your uncommitted changes in src\/a\.js/);
+});
+
+test('overwriting a file the owner had changed says so', (t) => {
+  const root = closedRepo(t);
+  put(root, 'src/a.js', 'OWNER UNCOMMITTED\n');
+  const r = changedBy(root, 'ow1', () => put(root, 'src/a.js', 'claude\n'));
+  assert.deepEqual(r.overwritten, ['src/a.js']);
+  assert.match(ownerNotice(r), /overwrote your uncommitted changes in src\/a\.js/);
+  assert.match(describeViolation('closed', r), /already had the owner's uncommitted changes, and the command overwrote them/);
+});
+
+test('a dirty file that only became ignored is not reported as wiped', (t) => {
+  const root = closedRepo(t);
+  put(root, 'src/own.js', 'mine\n');
+  const r = changedBy(root, 'ig1', () => writeFileSync(join(root, '.git/info/exclude'), 'src/own.js\n'));
+  assert.equal(r, null);
+});
+
+test('when the command deletes .phaseproof the reason says the phase was closed', (t) => {
+  const root = closedRepo(t);
+  const id = JSON.stringify({ cwd: root, tool_name: 'Bash', tool_use_id: 'dp1', tool_input: { command: 'x' } });
+  pre(id, root);
+  rmSync(join(root, '.phaseproof'), { recursive: true, force: true });
+  put(root, 'src/a.js', 'changed\n');
+  assert.match(JSON.parse(post(id, root)).reason, /Code is closed because the phase was closed when the command started\./);
 });

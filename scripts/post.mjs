@@ -1,6 +1,7 @@
 import { closedReason } from './lib/decide.mjs';
 import { isMain } from './lib/main.mjs';
 import { describeViolation, ownerNotice, verify } from './lib/shell.mjs';
+import { isActive } from './lib/project.mjs';
 
 export function respond(raw, projectDir = process.env.CLAUDE_PROJECT_DIR) {
   try {
@@ -9,7 +10,7 @@ export function respond(raw, projectDir = process.env.CLAUDE_PROJECT_DIR) {
     if (input.tool_name !== 'Bash') return '';
     const result = verify(root, input.tool_use_id);
     if (!result) return '';
-    const reason = closedReason(root) ?? 'the phase was closed when the command started.';
+    const reason = (isActive(root) && closedReason(root)) || 'the phase was closed when the command started.';
     const message = describeViolation(reason, result);
     const systemMessage = ownerNotice(result);
     if (input.hook_event_name === 'PostToolUseFailure') {

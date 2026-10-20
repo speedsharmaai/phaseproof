@@ -141,6 +141,12 @@ function emptyTree(root) {
   return r.status === 0 ? r.stdout.toString('utf8').trim() : null;
 }
 
+function headBlobHash(root, state, rel) {
+  if (!state.head) return null;
+  const r = git(state.top, ['cat-file', 'blob', `${state.head}:${state.prefix}${rel}`]);
+  return r.status === 0 ? sha256(r.stdout) : null;
+}
+
 function committedCode(root, state, docPaths, from) {
   if (!state.head) return [];
   const base = from ?? emptyTree(root);
@@ -171,9 +177,17 @@ export function verify(root, id) {
     return !prev || !same(prev, describe(root, rel, prev?.hash !== undefined ? budget : null));
   });
   const now = new Set(paths);
-  const discarded = [...before.keys()].filter((rel) => !now.has(rel) && !committed.includes(rel)).sort();
+  const discarded = [...before.keys()]
+    .filter((rel) => !now.has(rel))
+    .filter((rel) => {
+      const prev = before.get(rel);
+      if (same(prev, describe(root, rel, prev.hash !== undefined ? { left: MAX_HASHED_TOTAL } : null))) return false;
+      return !(prev.hash !== undefined && headBlobHash(root, state, rel) === prev.hash);
+    })
+    .sort();
+  const overwritten = changed.filter((rel) => before.has(rel));
   if (!changed.length && !committed.length && !discarded.length) return null;
-  return { changed, committed, discarded, headMoved: snap.head !== state.head };
+  return { changed, committed, discarded, overwritten, headMoved: snap.head !== state.head };
 }
 
 const list = (files) => files.slice(0, 10).join(', ') + (files.length > 10 ? ` and ${files.length - 10} more` : '');
@@ -183,6 +197,7 @@ const shortReason = (reason) => `${reason.replace(/^phaseproof: /, '').split(/\.
 export function describeViolation(phaseReason, result) {
   const lines = [];
   if (result.changed.length) lines.push(`phaseproof: code changed during that shell command while code is closed: ${list(result.changed)}.`);
+  if (result.overwritten?.length) lines.push(`phaseproof: these files already had the owner's uncommitted changes, and the command overwrote them: ${list(result.overwritten)}.`);
   if (result.discarded?.length) lines.push(`phaseproof: uncommitted changes that existed before the command are gone now: ${list(result.discarded)}.`);
   if (result.committed.length) lines.push(`phaseproof: HEAD moved during that command (commit, reset or checkout), and the code it points to differs from before: ${list(result.committed)}.`);
   lines.push('phaseproof did not touch any file. Do not modify, restore, move or delete these files, and do not run git checkout, restore, reset, stash or clean to "fix" this.');
@@ -193,8 +208,11 @@ export function describeViolation(phaseReason, result) {
 
 export function ownerNotice(result) {
   const parts = [];
-  if (result.changed.length) parts.push(`changed ${list(result.changed)}`);
-  if (result.discarded?.length) parts.push(`wiped uncommitted changes in ${list(result.discarded)}`);
-  if (result.committed.length) parts.push(`moved HEAD so ${list(result.committed)} differ`);
+  const overwritten = result.overwritten ?? [];
+  const plain = result.changed.filter((rel) => !overwritten.includes(rel));
+  if (plain.length) parts.push(`changed ${list(plain)}`);
+  if (overwritten.length) parts.push(`overwrote your uncommitted changes in ${list(overwritten)}`);
+  if (result.discarded?.length) parts.push(`wiped your uncommitted changes in ${list(result.discarded)}`);
+  if (result.committed.length) parts.push(`moved HEAD, so the committed code in ${list(result.committed)} is different`);
   return `phaseproof: while the phase is closed, a shell command ${parts.join('; ')}. phaseproof did not touch any file. Claude was asked to stop and wait for you.`;
 }

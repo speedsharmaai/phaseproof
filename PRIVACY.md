@@ -14,7 +14,7 @@ Only files inside your project, under `.phaseproof/`:
 
 None of these contain names, emails or other personal data unless you put them there. You can delete the folder at any time.
 
-Outside `.phaseproof/`, it writes only short-lived records to `.git/phaseproof/` while code is closed: file paths, sizes, modification times, hashes and symlink targets around each shell command, never file contents. Each record is removed after its command; one left by a command that never ran is pruned once it is a day old.
+Outside `.phaseproof/`, it writes only short-lived records to `phaseproof/` inside the git directory (`.git/phaseproof/`, or the worktree's or submodule's git dir) while code is closed: file paths, sizes, modification times, hashes and symlink targets around each shell command, never file contents. Each record is removed after its command. A record left by a command that never ran (denied or interrupted) is pruned by a later snapshot in the same repository once it is a day old.
 
 ## What it sends
 
