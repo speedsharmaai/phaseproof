@@ -43,13 +43,24 @@ export function readText(file) {
 export const loadConfig = (root) => ({ ...DEFAULT_CONFIG, ...readJson(ppPath(root, 'config.json'), {}) });
 export const loadState = (root) => readJson(ppPath(root, 'state.json'), null);
 
-export function phaseDir(root, phase) {
+export function phaseDirs(root, phase) {
   const base = join(root, 'phases');
-  if (!existsSync(base)) return null;
-  const hit = readdirSync(base)
+  if (!existsSync(base)) return [];
+  return readdirSync(base)
     .sort()
-    .find((n) => n === `phase-${phase}` || n.startsWith(`phase-${phase}-`));
-  return hit ? join(base, hit) : null;
+    .filter((n) => n === `phase-${phase}` || n.startsWith(`phase-${phase}-`))
+    .map((n) => join(base, n));
+}
+
+export function phaseDir(root, phase) {
+  return phaseDirs(root, phase)[0] ?? null;
+}
+
+const visibleText = (md) => md.replace(/```[\s\S]*?```/g, '').replace(/<!--[\s\S]*?-->/g, '');
+
+export function scopeField(text, name) {
+  const m = new RegExp(`^\\*\\*${name}:\\*\\*[ \\t]*(.*)$`, 'm').exec(visibleText(text ?? ''));
+  return m ? m[1].trim() : null;
 }
 
 export const approvalFile = (root, phase) => ppPath(root, 'approvals', `phase-${phase}.json`);
@@ -72,7 +83,7 @@ export function scopeHash(root, phase) {
 export function phaseSize(root, phase) {
   const dir = phaseDir(root, phase);
   const scope = dir ? readText(join(dir, 'scope.md')) : null;
-  return scope && /^\*\*Size:\*\*\s*quick\b/im.test(scope) ? 'quick' : 'full';
+  return scopeField(scope, 'Size') === 'quick' ? 'quick' : 'full';
 }
 
 export function scopeText(root, phase) {

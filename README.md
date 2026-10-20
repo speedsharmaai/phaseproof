@@ -82,7 +82,7 @@ When `.phaseproof/state.json` exists in a project, a `PreToolUse` hook:
 
 - blocks `Write`, `Edit`, `MultiEdit` and `NotebookEdit` on code until the current phase is approved, and again after its gate passes
 - refuses to close a phase when test files were deleted or `.skip`/`.only`/`xit`/`@pytest.mark.skip`-style markers were added since approval, unless scope.md names them under **Removes tests:** or **Skips tests:**
-- closes code again when `scope.md`, `tasks.md` or `screens.md` change after approval; re-approving then needs a fresh docs review
+- closes code again when `scope.md`, `tasks.md` or `screens.md` change after approval; re-approving a full phase then needs a fresh docs review. A phase only counts as quick on a plain `**Size:** quick` line, never after a failed docs review, and never if it was approved as full. Each phase number may have one folder
 - closes code when a phase is blocked after two failed code reviews, until the owner approves it again
 - always allows Markdown, `docs/`, `phases/` and `design/`
 - blocks writes to `.phaseproof/gates`, `approvals`, `runs` and `blocks`, by file tools or by Bash, and blocks running `approve` from Bash

@@ -12,6 +12,7 @@ import {
   loadState,
   padPhase,
   phaseDir,
+  phaseDirs,
   phaseSize,
   ppPath,
   readJson,
@@ -20,6 +21,7 @@ import {
   runFile,
   scopeChanged,
   scopeHash,
+  scopeField,
   scopeText,
   sha256,
   writeJson,
@@ -32,7 +34,7 @@ const USAGE = `usage: phaseproof <command>
   init [--check "<cmd>"]... [--phase NN]
                               start tracking this project (checks run before every gate)
   status                      current phase and what it is waiting on
-  approve <phase>             owner sign-off that opens code for a phase (also clears a block)
+  approve <phase> [--new-base] owner sign-off that opens code for a phase (also clears a block)
   check [phase]               run the configured checks and record the result
   gate <phase>                re-run checks, read the code review, close the phase
   block [phase]               stop the phase after a failed code review until the owner decides
@@ -42,6 +44,15 @@ class Refusal extends Error {}
 const refuse = (msg) => {
   throw new Refusal(msg);
 };
+
+function requireOneFolder(root, phase) {
+  const dirs = phaseDirs(root, phase);
+  if (dirs.length > 1) refuse(`phase ${phase} has ${dirs.length} folders (${dirs.map((d) => d.split(/[\\/]/).pop()).join(', ')}). Keep one; a quick fix waits for the current phase or goes into its scope.`);
+  return dirs[0] ?? null;
+}
+
+const testAllowances = (root, phase) =>
+  ['Removes tests', 'Skips tests'].map((f) => scopeField(scopeText(root, phase), f)).filter((v) => v && v.toLowerCase() !== 'none');
 
 function requireActive(root) {
   if (!isActive(root)) refuse('this project is not tracked yet. Run: phaseproof init');
@@ -102,23 +113,29 @@ const commands = {
 
   approve(root, args, out) {
     const { phase: current } = requireActive(root);
-    const phase = padPhase(args[0] ?? current);
+    const phase = padPhase(args.find((a) => !a.startsWith('--')) ?? current);
     if (phase !== current) refuse(`current phase is ${current}, not ${phase}`);
-    const dir = phaseDir(root, phase);
+    const dir = requireOneFolder(root, phase);
     if (!dir || !existsSync(join(dir, 'scope.md'))) refuse(`write phases/phase-${phase}-<name>/scope.md first`);
-    const quick = phaseSize(root, phase) === 'quick';
-    const docsText = quick ? readText(reviewFile(root, phase, 'docs')) : requireReview(root, phase, 'docs');
+    const previous = readJson(approvalFile(root, phase), null);
+    const existingDocs = readText(reviewFile(root, phase, 'docs'));
+    const quick = phaseSize(root, phase) === 'quick' && previous?.size !== 'full' && !(existingDocs && !parseVerdict(existingDocs).pass);
+    const docsText = quick ? existingDocs : requireReview(root, phase, 'docs');
     const docs = docsText ? sha256(docsText) : null;
     if (existsSync(join(dir, 'screens.md'))) requireReview(root, phase, 'design');
     const scope = scopeHash(root, phase);
-    const previous = readJson(approvalFile(root, phase), null);
     if (!quick && previous?.scopeHash && previous.scopeHash !== scope && previous.docsReview === docs) {
       refuse(`phase ${phase} scope changed since the last approval. Get a fresh docs review first.`);
     }
-    writeJson(approvalFile(root, phase), { phase, approvedAt: new Date().toISOString(), head: gitHead(root), scopeHash: scope, docsReview: docs });
+    const head = gitHead(root);
+    const base = args.includes('--new-base') ? head : (previous?.base ?? previous?.head ?? head);
+    writeJson(approvalFile(root, phase), { phase, approvedAt: new Date().toISOString(), head, base, size: quick ? 'quick' : 'full', scopeHash: scope, docsReview: docs });
     const unblocked = existsSync(blockFile(root, phase));
     if (unblocked) rmSync(blockFile(root, phase));
-    out(`phase ${phase} approved. Code is open for this phase.${unblocked ? ' Block cleared.' : ''}`);
+    const notes = [];
+    if (quick) notes.push('Quick phase: no docs review.');
+    for (const a of testAllowances(root, phase)) notes.push(`The scope allows test changes: ${a}.`);
+    out(`phase ${phase} approved. Code is open for this phase.${unblocked ? ' Block cleared.' : ''}${notes.length ? ` ${notes.join(' ')}` : ''}`);
   },
 
   check(root, args, out) {
@@ -133,17 +150,22 @@ const commands = {
     const { phase: current } = requireActive(root);
     const phase = padPhase(args[0] ?? current);
     if (!existsSync(approvalFile(root, phase))) refuse(`phase ${phase} was never approved`);
+    requireOneFolder(root, phase);
     if (existsSync(blockFile(root, phase))) refuse(`phase ${phase} is blocked. The owner has to approve it again first`);
     if (scopeChanged(root, phase)) refuse(`phase ${phase} scope changed since approval. Review it and approve again`);
-    const docs = phaseSize(root, phase) === 'quick' ? readText(reviewFile(root, phase, 'docs')) : requireReview(root, phase, 'docs');
+    const approval = readJson(approvalFile(root, phase), {});
+    const docs = approval.size === 'quick' ? readText(reviewFile(root, phase, 'docs')) : requireReview(root, phase, 'docs');
     const code = requireReview(root, phase, 'code');
-    const tampered = testTampering(root, readJson(approvalFile(root, phase), {}).head, scopeText(root, phase));
+    const tampered = testTampering(root, approval.base ?? approval.head, testAllowances(root, phase).join(','));
+    if (tampered?.unverifiable) {
+      refuse(`the approval's base commit ${tampered.unverifiable.slice(0, 12)} is gone (rebase or gc), so tests can't be compared. The owner runs /phaseproof:approve ${phase} --new-base after checking the tests by hand.`);
+    }
     if (tampered) {
       const lines = [
         ...tampered.removed.map((f) => `removed ${f}`),
         ...tampered.skipped.map((s) => `skip or focus added in ${s.file}: ${s.line}`),
       ];
-      refuse(`tests were weakened since approval, gate stays open:\n  ${lines.join('\n  ')}\nIf this is intended, name the files in scope.md under **Removes tests:** or **Skips tests:**, get it reviewed and approved again.`);
+      refuse(`tests were weakened since approval, gate stays open:\n  ${lines.join('\n  ')}\nRestore them. If the owner wants this, they list the files in scope.md under **Removes tests:** or **Skips tests:** and approve again; do not edit scope.md for this yourself.`);
     }
     const results = checkResults(root, phase);
     out(describe(results));

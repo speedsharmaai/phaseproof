@@ -2,19 +2,22 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { closedReason } from './lib/decide.mjs';
 import { isMain } from './lib/main.mjs';
-import { approvalFile, blockFile, gateFile, isActive, loadState, phaseDir, phaseSize, scopeText } from './lib/project.mjs';
+import { approvalFile, blockFile, gateFile, isActive, loadState, phaseDir, phaseSize, scopeField, scopeText } from './lib/project.mjs';
 
 const MAX = 1500;
 
+const FIELD_MAX = 300;
 const field = (text, name) => {
-  const m = new RegExp(`^\\*\\*${name}:\\*\\*\\s*(.+)$`, 'im').exec(text);
-  return m ? m[1].trim() : null;
+  const value = scopeField(text, name);
+  if (!value) return null;
+  return value.length > FIELD_MAX ? `${value.slice(0, FIELD_MAX - 3)}...` : value;
 };
 
 export function context(root) {
   if (!isActive(root)) return null;
-  const phase = loadState(root)?.phase;
-  if (!phase) return null;
+  const raw = loadState(root)?.phase;
+  if (typeof raw !== 'string' || !/^\d{1,3}$/.test(raw)) return null;
+  const phase = raw;
   const dir = phaseDir(root, phase);
   const scope = scopeText(root, phase);
   const state = existsSync(blockFile(root, phase))
@@ -33,8 +36,7 @@ export function context(root) {
   lines.push(closed ? `Code is closed: ${closed}` : 'Code is open for this phase only. Stay inside its scope.md and tasks.md.');
   if (existsSync(join(root, 'docs', 'learnings.md'))) lines.push('Read docs/learnings.md before planning or reviewing; it lists mistakes earlier phases made.');
   lines.push('Run /phaseproof:status for details.');
-  const text = lines.join('\n');
-  return text.length > MAX ? `${text.slice(0, MAX - 3)}...` : text;
+  return lines.join('\n').slice(0, MAX);
 }
 
 export function respond(raw, projectDir = process.env.CLAUDE_PROJECT_DIR) {

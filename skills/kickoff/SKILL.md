@@ -10,7 +10,7 @@ If the project already has a README and a `phases/` folder, don't rewrite them. 
 
 If the project already has code but no phaseproof docs, adopt it instead of templating it:
 - send `phaseproof:explorer` first to map the stack, folder layout, test setup, lint and type config, and the conventions the code actually follows
-- write the README rules and `docs/decisions/0001-<stack>.md` from what the code does today (Status: Accepted, recorded from the existing code), not from the template's placeholders
+- write the rules (into `docs/brief.md` when a README already exists) and `docs/decisions/0001-<stack>.md` from what the code does today (Status: Accepted, recorded from the existing code), not from the template's placeholders
 - take the check commands from the project's own scripts (package.json, Makefile, pyproject, CI config)
 - the first phase is the change the owner wants next, not a rewrite
 

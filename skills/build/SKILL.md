@@ -6,7 +6,7 @@ argument-hint: "[NN]"
 
 Build the current phase.
 
-1. Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/phaseproof.mjs" status`. If it is not approved, stop and say so. Read the approval's `head` from `.phaseproof/approvals/phase-NN.json`; it is the review base.
+1. Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/phaseproof.mjs" status`. If it is not approved, stop and say so. Read `base` from `.phaseproof/approvals/phase-NN.json` (older approvals only have `head`); it is the review base.
 2. Send `phaseproof:builder` the paths to the phase's `scope.md` and `tasks.md` and the README. Large phases may go task section by task section.
 3. Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/phaseproof.mjs" check`. On failure, send the output back to the builder.
 4. Review. Send `phaseproof:code-reviewer` the scope.md and tasks.md paths, `docs/learnings.md` if it exists, and the base commit, and nothing about how the build went. Save its reply verbatim to `.phaseproof/reviews/phase-NN-code.md`. Never edit, trim or summarise a review.

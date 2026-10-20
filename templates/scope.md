@@ -16,6 +16,10 @@
 
 - <thing deliberately left for later, and which phase picks it up>
 
+**Removes tests:** none (comma-separated paths; a path ending in / covers a folder)
+
+**Skips tests:** none
+
 ## Decisions
 
 - <choices made for this phase, or links to ADRs>
