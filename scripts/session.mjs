@@ -27,7 +27,7 @@ export function context(root) {
       : existsSync(approvalFile(root, phase))
         ? 'approved, building'
         : 'not approved yet, planning';
-  const lines = [`phaseproof is active. Current phase: ${phase}${dir ? ` (${dir.split(/[\\/]/).pop()})` : ''}${readJson(approvalFile(root, phase), {}).size === 'quick' ? ', approved as quick' : ''}. State: ${state}.`];
+  const lines = [`phaseproof is active. Current phase: ${phase}${dir ? ` (${dir.split(/[\\/]/).pop()})` : ''}${({ quick: ', approved as quick', full: ', approved as full' })[readJson(approvalFile(root, phase), {}).size] ?? ''}. State: ${state}.`];
   const goal = field(scope, 'Goal');
   const done = field(scope, 'Done when');
   if (goal) lines.push(`Goal: ${goal}`);

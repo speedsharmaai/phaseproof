@@ -21,7 +21,7 @@ Check:
 - what the end user sees when this fails: a clear message and a safe state, not a stack trace or lost work
 - slow paths a real user will hit: N+1 queries, unbounded loops, missing pagination or timeouts
 - names and structure a new contributor can follow without asking the author
-- test changes: deleted tests, loosened assertions, or expected values changed to match new behaviour are blockers unless scope.md says so. Newly skipped or focused tests are majors: name each one so the owner can decide
+- test changes: deleted tests, loosened assertions, expected values changed to match new behaviour, and newly skipped or focused tests are majors unless scope.md says so. Name each one so the owner can decide; the gate also warns about deleted tests and skips
 - a phase approved as quick (`size` in `.phaseproof/approvals/phase-NN.json`) whose diff touches data models, auth, money or migrations is a major: say it should have been a full phase, and let the owner decide
 - anything `docs/learnings.md` warns about, if it exists
 

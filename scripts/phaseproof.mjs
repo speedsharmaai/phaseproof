@@ -53,6 +53,28 @@ function requireOneFolder(root, phase) {
 
 const removalAllowance = (root, phase) => scopeList(scopeText(root, phase), 'Removes tests').join(', ');
 
+const MAX_WARNINGS = 50;
+
+function testWarnings(root, phase, approval) {
+  try {
+    const base = approval.base ?? approval.head ?? null;
+    if (base === null) {
+      return [gitHead(root) === null && !existsSync(join(root, '.git')) ? 'tests were not compared: this project is not a git repository' : 'tests were not compared: this phase was approved before the repository had any history'];
+    }
+    const tests = testTampering(root, base, removalAllowance(root, phase));
+    const all = [
+      ...(tests?.unverifiable ? [`tests were not compared: the approval's base commit ${String(tests.unverifiable).slice(0, 12)} is gone (rebase or gc). /phaseproof:approve ${phase} --new-base records a new one`] : []),
+      ...(tests?.unchecked ? [`tests were not compared: ${tests.unchecked}`] : []),
+      ...(tests?.removed ?? []).map((f) => `possible deleted test: ${f} (restore it, stage a move with git add -A, or have the owner list it under **Removes tests:**)`),
+      ...(tests?.skipped ?? []).map((s) => `possible skip or focus added in ${s.file}: ${s.line}`),
+      ...(tests?.incomplete ? ['the skip check could not read every test diff'] : []),
+    ];
+    return all.length > MAX_WARNINGS ? [...all.slice(0, MAX_WARNINGS), `and ${all.length - MAX_WARNINGS} more`] : all;
+  } catch (e) {
+    return [`tests were not compared: ${e.message}`];
+  }
+}
+
 function requireActive(root) {
   if (!isActive(root)) refuse('this project is not tracked yet. Run: phaseproof init');
   return loadState(root);
@@ -158,15 +180,7 @@ const commands = {
     const approval = readJson(approvalFile(root, phase), {});
     const docs = approval.size === 'quick' ? readText(reviewFile(root, phase, 'docs')) : requireReview(root, phase, 'docs');
     const code = requireReview(root, phase, 'code');
-    const tests = testTampering(root, approval.base ?? approval.head, removalAllowance(root, phase));
-    const warnings = [
-      ...(tests?.unverifiable ? [`tests were not compared: the approval's base commit ${tests.unverifiable.slice(0, 12)} is gone (rebase or gc). /phaseproof:approve ${phase} --new-base records a new one`] : []),
-      ...(tests?.unchecked ? [`tests were not compared: ${tests.unchecked}`] : []),
-      ...(approval.base === null ? ['tests were not compared: this phase was approved before the repository had any history'] : []),
-      ...(tests?.removed ?? []).map((f) => `possible deleted test: ${f} (restore it, stage a move with git add -A, or have the owner list it under **Removes tests:**)`),
-      ...(tests?.skipped ?? []).map((s) => `possible skip or focus added in ${s.file}: ${s.line}`),
-      ...(tests?.incomplete ? ['the skip check could not read every test diff'] : []),
-    ];
+    const warnings = testWarnings(root, phase, approval);
     const results = checkResults(root, phase);
     out(describe(results));
     if (warnings.length) out(`check before trusting this gate (warnings, the gate does not block on them):\n  ${warnings.join('\n  ')}`);

@@ -53,13 +53,23 @@ export const isSkipLine = (path, line) => (SKIPS[kindOf(path)] ?? []).some((re) 
 const watched = (path) => isTestFile(path) || kindOf(path) === 'rs';
 
 const ORDER = fileURLToPath(new URL('./empty.order', import.meta.url));
-const DIFF = ['--no-ext-diff', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', '--relative', `-O${ORDER}`];
-const git = (root, args, input) =>
+const DIFF = ['--no-ext-diff', '--no-textconv', '--text', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', '--relative', `-O${ORDER}`];
+const TIMEOUT_MS = 20000;
+const run = (root, pathspecMode, args, input) =>
   spawnSync(
     'git',
-    ['--no-optional-locks', '--literal-pathspecs', '-c', 'core.quotePath=false', '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', '-c', 'diff.renameLimit=0', ...args],
-    { cwd: root, input, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 },
+    ['--no-optional-locks', pathspecMode, '-c', 'core.quotePath=false', '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', '-c', 'diff.renameLimit=0', ...args],
+    { cwd: root, input, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, timeout: TIMEOUT_MS },
   );
+const git = (root, args, input) => run(root, '--literal-pathspecs', args, input);
+const gitGlob = (root, args) => run(root, '--glob-pathspecs', args);
+
+const TEST_GLOBS = [
+  '**/test/**', '**/tests/**', '**/__tests__/**', '**/spec/**',
+  '**/*.test.*', '**/*.spec.*', '**/*.cy.*', '**/*_test.*', '**/*_spec.*',
+  '**/test_*.py', '**/tests.py', '**/conftest.py',
+  '**/*Test.*', '**/*Tests.*', '**/*Spec.*', '**/*IT.*', '**/*.rs',
+];
 
 function parsePlusPath(line) {
   let rest = line.slice(4);
@@ -107,7 +117,7 @@ function treeTests(root, rev) {
 }
 
 function nameStatus(root, args) {
-  const parts = zlist(git(root, ['diff', ...DIFF, '--name-status', '-M75%', '-z', ...args]));
+  const parts = zlist(gitGlob(root, ['diff', ...DIFF, '--name-status', '-M75%', '-z', ...args, '--', ...TEST_GLOBS]));
   if (!parts) return null;
   const entries = [];
   for (let i = 0; i < parts.length; ) {
@@ -145,15 +155,15 @@ function hashFiles(root, all) {
 }
 
 function removedSince(root, base) {
-  const committed = nameStatus(root, [base, 'HEAD']);
-  const staged = nameStatus(root, ['--cached', 'HEAD']);
   const head = treeTests(root, 'HEAD');
   const untracked = zlist(git(root, ['ls-files', '--others', '--exclude-standard', '-z']));
-  if (!committed || !staged || !head || !untracked) return null;
+  const indexAll = zlist(git(root, ['ls-files', '-z']));
+  if (!head || !untracked || !indexAll) return null;
+  const committed = nameStatus(root, [base, 'HEAD']);
+  const staged = nameStatus(root, ['--cached', 'HEAD']);
+  if (!committed || !staged) return null;
 
-  const index = zlist(git(root, ['ls-files', '-z']));
-  if (!index) return null;
-  const tracked = new Set(index);
+  const tracked = new Set(indexAll);
   const stagedAway = new Set(staged.filter((e) => e.code === 'R' && isTestFile(e.to) && isRegularFile(join(root, e.to))).map((e) => e.from));
   const missing = [...head.keys()].filter((p) => !isRegularFile(join(root, p)) && !stagedAway.has(p));
   const newTests = untracked.filter(isTestFile).filter((p) => isRegularFile(join(root, p)));
@@ -168,8 +178,8 @@ function removedSince(root, base) {
 }
 
 function skipsSince(root, base) {
-  const diff = git(root, ['diff', ...DIFF, '-M75%', '-U0', base]);
   const untracked = zlist(git(root, ['ls-files', '--others', '--exclude-standard', '-z']));
+  const diff = gitGlob(root, ['diff', ...DIFF, '-M75%', '-U0', base, '--', ...TEST_GLOBS]);
   const skipped = [];
   let file = null;
   for (const line of diff.status === 0 ? diff.stdout.split('\n') : []) {
@@ -194,7 +204,8 @@ function skipsSince(root, base) {
 
 export function testTampering(root, base, allowList = '') {
   if (!base) return null;
-  if (git(root, ['rev-parse', '--git-dir']).status !== 0) return null;
+  if (typeof base !== 'string' || !/^[0-9a-f]{7,64}$/.test(base)) return { unchecked: 'the approval has no valid base commit; /phaseproof:approve NN --new-base records one' };
+  if (git(root, ['rev-parse', '--git-dir']).status !== 0) return { unchecked: 'git is not available here, or this folder is no longer a git repository' };
   if (git(root, ['cat-file', '-e', `${base}^{commit}`]).status !== 0) return { unverifiable: base };
   const gone = removedSince(root, base);
   if (!gone) return { unchecked: 'git could not list the test files that changed since approval' };

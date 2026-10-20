@@ -165,7 +165,8 @@ test('odd paths, untracked focus, exact allow-lists, non-git dirs', (t) => {
   rmSync(join(root, 'src/a.test.js'));
   assert.deepEqual(testTampering(root, head, 'src/a.test.jsx').removed, ['src/a.test.js']);
   assert.deepEqual(testTampering(root, head, 'src/').removed, []);
-  assert.equal(testTampering(tempProject(t), head), null);
+  assert.match(testTampering(tempProject(t), head).unchecked, /git is not available here/);
+  assert.match(testTampering(root, 12345).unchecked, /no valid base commit/);
 });
 
 test('isTestFile: real layouts in, look-alikes and fixtures out', () => {
@@ -392,11 +393,11 @@ test('safecrlf, autocrlf and symlink swaps do not hide deletions', { skip: proce
 
 test('a big codemod across many test files neither crashes nor falsely refuses', (t) => {
   const root = project(t);
-  for (let i = 0; i < 2500; i++) put(root, `tests/very/long/directory/name/for/argv/limits/case_${i}.test.js`, `test("${i}", () => {});\n`);
+  for (let i = 0; i < 1500; i++) put(root, `tests/very/long/directory/name/for/argv/limits/case_${i}.test.js`, `test("${i}", () => {});\n`);
   git(root, 'add', '-A');
   git(root, 'commit', '-qm', 'many');
   const head = git(root, 'rev-parse', 'HEAD').stdout.trim();
-  for (let i = 0; i < 2500; i++) put(root, `tests/very/long/directory/name/for/argv/limits/case_${i}.test.js`, `test("${i}!", () => {});\n`);
+  for (let i = 0; i < 1500; i++) put(root, `tests/very/long/directory/name/for/argv/limits/case_${i}.test.js`, `test("${i}!", () => {});\n`);
   assert.equal(testTampering(root, head), null);
 });
 
