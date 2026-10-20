@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { approvalFile, gateFile, loadConfig, loadState, readJson, runFile } from '../scripts/lib/project.mjs';
+import { approvalFile, blockFile, gateFile, loadConfig, loadState, readJson, runFile } from '../scripts/lib/project.mjs';
 import { approvedProject, cli, FAIL, PASS, put, tempProject } from './helpers.mjs';
 
 test('usage without a command, error on an unknown one', (t) => {
@@ -111,4 +111,53 @@ test('status reports each step', (t) => {
   assert.match(s, /docs review {2}pass/);
   assert.match(s, /approved {5}yes/);
   assert.match(s, /gate {9}open/);
+});
+
+test('block needs a failed code review', (t) => {
+  const root = approvedProject(t);
+  assert.match(cli(root, 'block').err, /block is for a failed code review/);
+  put(root, '.phaseproof/reviews/phase-01-code.md', PASS);
+  assert.match(cli(root, 'block').err, /block is for a failed code review/);
+  put(root, '.phaseproof/reviews/phase-01-code.md', FAIL);
+  const r = cli(root, 'block');
+  assert.equal(r.code, 0);
+  assert.match(r.out, /phase 01 blocked: verdict is FAIL/);
+  assert.equal(readJson(blockFile(root, '01')).blockers.length, 1);
+});
+
+test('blocked phase: status says so, gate refuses, approve clears it', (t) => {
+  const root = approvedProject(t);
+  put(root, '.phaseproof/reviews/phase-01-code.md', FAIL);
+  cli(root, 'block');
+  assert.match(cli(root, 'status').out, /BLOCKED {6}verdict is FAIL, waiting on the owner/);
+  put(root, '.phaseproof/reviews/phase-01-code.md', PASS);
+  assert.match(cli(root, 'gate').err, /is blocked/);
+  const r = cli(root, 'approve');
+  assert.match(r.out, /Block cleared/);
+  assert.equal(existsSync(blockFile(root, '01')), false);
+  assert.equal(cli(root, 'gate').code, 0);
+});
+
+test('changed scope needs a fresh docs review before re-approval', (t) => {
+  const root = approvedProject(t);
+  put(root, 'phases/phase-01-auth/tasks.md', '## 1 · new task\n');
+  assert.match(cli(root, 'status').out, /approved {5}stale, scope changed since approval/);
+  put(root, '.phaseproof/reviews/phase-01-code.md', PASS);
+  assert.match(cli(root, 'gate').err, /scope changed since approval/);
+  assert.match(cli(root, 'approve').err, /Get a fresh docs review first/);
+  put(root, '.phaseproof/reviews/phase-01-docs.md', `${PASS}\nre-reviewed after the tasks change\n`);
+  assert.equal(cli(root, 'approve').code, 0);
+  assert.match(cli(root, 'status').out, /approved {5}yes/);
+});
+
+test('re-approving an unchanged scope needs no new review', (t) => {
+  const root = approvedProject(t);
+  assert.equal(cli(root, 'approve').code, 0);
+});
+
+test('approval records the scope and docs review hashes', (t) => {
+  const root = approvedProject(t);
+  const a = readJson(approvalFile(root, '01'));
+  assert.equal(a.scopeHash.length, 64);
+  assert.equal(a.docsReview.length, 64);
 });

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { decide, toProjectPath } from '../scripts/lib/decide.mjs';
-import { approvedProject, cli, PASS, put, tempProject } from './helpers.mjs';
+import { approvedProject, cli, FAIL, PASS, put, tempProject } from './helpers.mjs';
 
 const write = (root, file) => decide({ root, toolName: 'Write', toolInput: { file_path: file } });
 const bash = (root, command) => decide({ root, toolName: 'Bash', toolInput: { command } });
@@ -88,4 +88,37 @@ test('toProjectPath', () => {
   assert.equal(toProjectPath('/a/b', 'c.js'), 'c.js');
   assert.equal(toProjectPath('/a/b', '/a/x.js'), null);
   assert.equal(toProjectPath('/a/b', '/a/b'), null);
+});
+
+test('a blocked phase keeps code closed until it is approved again', (t) => {
+  const root = approvedProject(t);
+  put(root, '.phaseproof/reviews/phase-01-code.md', FAIL);
+  assert.equal(cli(root, 'block').code, 0);
+  const r = write(root, join(root, 'src/index.js'));
+  assert.equal(r.allow, false);
+  assert.match(r.reason, /blocked after two failed code reviews/);
+  assert.equal(cli(root, 'approve', '01').code, 0);
+  assert.equal(write(root, join(root, 'src/index.js')).allow, true);
+});
+
+test('editing scope after approval closes code', (t) => {
+  const root = approvedProject(t);
+  put(root, 'phases/phase-01-auth/scope.md', '# Phase 01\nnow with more scope\n');
+  const r = write(root, join(root, 'src/index.js'));
+  assert.equal(r.allow, false);
+  assert.match(r.reason, /scope changed after it was approved/);
+});
+
+test('approvals from 0.1 without a scope hash still open code', (t) => {
+  const root = approvedProject(t);
+  put(root, '.phaseproof/approvals/phase-01.json', JSON.stringify({ phase: '01' }));
+  put(root, 'phases/phase-01-auth/scope.md', '# changed\n');
+  assert.equal(write(root, join(root, 'src/index.js')).allow, true);
+});
+
+test('bash cannot touch block records', (t) => {
+  const root = tempProject(t);
+  cli(root, 'init');
+  assert.equal(bash(root, 'rm .phaseproof/blocks/phase-01.json').allow, false);
+  assert.equal(bash(root, 'node /p/scripts/phaseproof.mjs block').allow, true);
 });

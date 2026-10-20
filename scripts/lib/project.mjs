@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 export const DIR = '.phaseproof';
 
@@ -55,6 +56,23 @@ export const approvalFile = (root, phase) => ppPath(root, 'approvals', `phase-${
 export const gateFile = (root, phase) => ppPath(root, 'gates', `phase-${phase}.json`);
 export const reviewFile = (root, phase, kind) => ppPath(root, 'reviews', `phase-${phase}-${kind}.md`);
 export const runFile = (root, phase) => ppPath(root, 'runs', `phase-${phase}-checks.json`);
+export const blockFile = (root, phase) => ppPath(root, 'blocks', `phase-${phase}.json`);
+
+export const sha256 = (text) => createHash('sha256').update(text).digest('hex');
+
+const SCOPE_FILES = ['scope.md', 'tasks.md', 'screens.md'];
+
+export function scopeHash(root, phase) {
+  const dir = phaseDir(root, phase);
+  if (!dir) return null;
+  const parts = SCOPE_FILES.map((name) => `${name}\n${readText(join(dir, name)) ?? ''}`);
+  return sha256(parts.join('\n---\n'));
+}
+
+export function scopeChanged(root, phase) {
+  const approval = readJson(approvalFile(root, phase), null);
+  return Boolean(approval?.scopeHash) && approval.scopeHash !== scopeHash(root, phase);
+}
 
 export function gitHead(root) {
   const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });

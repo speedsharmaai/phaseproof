@@ -77,8 +77,10 @@ To run an agent on a different model, copy its file from `agents/` into `~/.clau
 When `.phaseproof/state.json` exists in a project, a `PreToolUse` hook:
 
 - blocks `Write`, `Edit`, `MultiEdit` and `NotebookEdit` on code until the current phase is approved, and again after its gate passes
+- closes code again when `scope.md`, `tasks.md` or `screens.md` change after approval; re-approving then needs a fresh docs review
+- closes code when a phase is blocked after two failed code reviews, until the owner approves it again
 - always allows Markdown, `docs/`, `phases/` and `design/`
-- blocks writes to `.phaseproof/gates`, `approvals` and `runs`, by file tools or by Bash, and blocks running `approve` from Bash
+- blocks writes to `.phaseproof/gates`, `approvals`, `runs` and `blocks`, by file tools or by Bash, and blocks running `approve` from Bash
 
 In any project without `.phaseproof/state.json` it does nothing. If the hook gets input it cannot parse, it allows the call rather than locking your session.
 
@@ -107,6 +109,7 @@ your-project/
     ├── reviews/                  reviewer reports, verbatim
     ├── approvals/                owner sign-offs
     ├── runs/                     last check results
+    ├── blocks/                   phases stopped after two failed reviews
     └── gates/                    closed phases, with check results and review hashes
 ```
 
@@ -130,7 +133,7 @@ No server, no telemetry, nothing collected. See [PRIVACY.md](PRIVACY.md).
 
 ## Status
 
-v0.1.1. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
+v0.2.0. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
 
 ## Related projects
 

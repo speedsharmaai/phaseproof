@@ -4,7 +4,7 @@ description: Write one phase's scope.md and tasks.md, then have an independent d
 argument-hint: "<NN> <short-name>"
 ---
 
-Plan phase $ARGUMENTS. Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/phaseproof.mjs" status` first; plan only the current phase.
+Plan phase $ARGUMENTS. Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/phaseproof.mjs" status` first; plan only the current phase. Editing the scope of an approved phase closes code until the docs are reviewed again and the owner re-approves.
 
 1. Read `README.md`, `phases/README.md`, accepted ADRs in `docs/decisions/`, and the previous phase's `progress.md` ("Notes for later phases"). If code exists, send `phaseproof:explorer` for the area this phase touches.
 2. Create `phases/phase-NN-<name>/` with `scope.md` and `tasks.md` from `${CLAUDE_PLUGIN_ROOT}/templates/`. Keep their headings. "Done when" must be observable on the running system. Every task section ends with a **Check:** line.

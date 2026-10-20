@@ -1,10 +1,10 @@
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { allPassed, runChecks } from './lib/checks.mjs';
 import { isMain } from './lib/main.mjs';
 import {
   approvalFile,
+  blockFile,
   gateFile,
   gitHead,
   isActive,
@@ -17,6 +17,9 @@ import {
   readText,
   reviewFile,
   runFile,
+  scopeChanged,
+  scopeHash,
+  sha256,
   writeJson,
 } from './lib/project.mjs';
 import { parseVerdict } from './lib/verdict.mjs';
@@ -25,17 +28,16 @@ const USAGE = `usage: phaseproof <command>
 
   init [--check "<cmd>"]...   start tracking this project (checks run before every gate)
   status                      current phase and what it is waiting on
-  approve <phase>             owner sign-off that opens code for a phase
+  approve <phase>             owner sign-off that opens code for a phase (also clears a block)
   check [phase]               run the configured checks and record the result
   gate <phase>                re-run checks, read the code review, close the phase
+  block [phase]               stop the phase after a failed code review until the owner decides
   next                        move to the next phase once the gate has passed`;
 
 class Refusal extends Error {}
 const refuse = (msg) => {
   throw new Refusal(msg);
 };
-
-const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 
 function requireActive(root) {
   if (!isActive(root)) refuse('this project is not tracked yet. Run: phaseproof init');
@@ -66,7 +68,7 @@ const commands = {
     for (let i = 0; i < args.length; i++) if (args[i] === '--check' && args[i + 1]) checks.push(args[++i]);
     writeJson(ppPath(root, 'config.json'), { ...loadConfig(root), checks });
     writeJson(ppPath(root, 'state.json'), { version: 1, phase: '01' });
-    for (const d of ['reviews', 'approvals', 'gates', 'runs']) mkdirSync(ppPath(root, d), { recursive: true });
+    for (const d of ['reviews', 'approvals', 'gates', 'runs', 'blocks']) mkdirSync(ppPath(root, d), { recursive: true });
     out(`tracking started at phase 01${checks.length ? '' : '. Add your test/typecheck commands to .phaseproof/config.json'}`);
   },
 
@@ -76,14 +78,17 @@ const commands = {
     const docs = parseVerdict(readText(reviewFile(root, phase, 'docs')));
     const code = parseVerdict(readText(reviewFile(root, phase, 'code')));
     const run = readJson(runFile(root, phase), null);
+    const approved = existsSync(approvalFile(root, phase));
+    const block = readJson(blockFile(root, phase), null);
     const lines = [
       `phase ${phase}${dir ? ` (${dir.split(/[\\/]/).pop()})` : ' (no phase folder yet)'}`,
       `  docs review  ${docs.pass ? 'pass' : docs.reason}`,
-      `  approved     ${existsSync(approvalFile(root, phase)) ? 'yes' : 'no'}`,
+      `  approved     ${approved ? (scopeChanged(root, phase) ? 'stale, scope changed since approval' : 'yes') : 'no'}`,
       `  checks       ${run ? (allPassed(run.results) ? 'pass' : 'failing') : 'not run'}`,
       `  code review  ${code.pass ? 'pass' : code.reason}`,
       `  gate         ${existsSync(gateFile(root, phase)) ? 'passed' : 'open'}`,
     ];
+    if (block) lines.push(`  BLOCKED      ${block.reason}, waiting on the owner`);
     out(lines.join('\n'));
   },
 
@@ -93,10 +98,17 @@ const commands = {
     if (phase !== current) refuse(`current phase is ${current}, not ${phase}`);
     const dir = phaseDir(root, phase);
     if (!dir || !existsSync(join(dir, 'scope.md'))) refuse(`write phases/phase-${phase}-<name>/scope.md first`);
-    requireReview(root, phase, 'docs');
+    const docs = sha256(requireReview(root, phase, 'docs'));
     if (existsSync(join(dir, 'screens.md'))) requireReview(root, phase, 'design');
-    writeJson(approvalFile(root, phase), { phase, approvedAt: new Date().toISOString(), head: gitHead(root) });
-    out(`phase ${phase} approved. Code is open for this phase.`);
+    const scope = scopeHash(root, phase);
+    const previous = readJson(approvalFile(root, phase), null);
+    if (previous?.scopeHash && previous.scopeHash !== scope && previous.docsReview === docs) {
+      refuse(`phase ${phase} scope changed since the last approval. Get a fresh docs review first.`);
+    }
+    writeJson(approvalFile(root, phase), { phase, approvedAt: new Date().toISOString(), head: gitHead(root), scopeHash: scope, docsReview: docs });
+    const unblocked = existsSync(blockFile(root, phase));
+    if (unblocked) rmSync(blockFile(root, phase));
+    out(`phase ${phase} approved. Code is open for this phase.${unblocked ? ' Block cleared.' : ''}`);
   },
 
   check(root, args, out) {
@@ -111,6 +123,8 @@ const commands = {
     const { phase: current } = requireActive(root);
     const phase = padPhase(args[0] ?? current);
     if (!existsSync(approvalFile(root, phase))) refuse(`phase ${phase} was never approved`);
+    if (existsSync(blockFile(root, phase))) refuse(`phase ${phase} is blocked. The owner has to approve it again first`);
+    if (scopeChanged(root, phase)) refuse(`phase ${phase} scope changed since approval. Review it and approve again`);
     const docs = requireReview(root, phase, 'docs');
     const code = requireReview(root, phase, 'code');
     const results = checkResults(root, phase);
@@ -124,6 +138,15 @@ const commands = {
       reviews: { docs: sha256(docs), code: sha256(code) },
     });
     out(`phase ${phase} gate: PASS`);
+  },
+
+  block(root, args, out) {
+    const { phase: current } = requireActive(root);
+    const phase = padPhase(args[0] ?? current);
+    const v = parseVerdict(readText(reviewFile(root, phase, 'code')));
+    if (v.pass || v.reason === 'no review report') refuse(`block is for a failed code review, and phase ${phase} has none`);
+    writeJson(blockFile(root, phase), { phase, blockedAt: new Date().toISOString(), reason: v.reason, blockers: v.blockers.slice(0, 20) });
+    out(`phase ${phase} blocked: ${v.reason}. Code is closed until the owner runs /phaseproof:approve ${phase}.`);
   },
 
   next(root, _args, out) {

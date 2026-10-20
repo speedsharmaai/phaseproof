@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0 - 2026-10-20
+
+- A second failed code review blocks the phase: code closes and the gate refuses until the owner approves again
+- Approval records a hash of scope.md, tasks.md and screens.md; editing them closes code, and re-approving needs a fresh docs review
+- `status` shows a blocked phase and a stale approval
+
 ## 0.1.1 - 2026-10-20
 
 - Plugin icon for the directory listing
