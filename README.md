@@ -84,10 +84,11 @@ When `.phaseproof/state.json` exists in a project, a `PreToolUse` hook:
 - closes code when a phase is blocked after two failed code reviews, until the owner approves it again
 - always allows Markdown, `docs/`, `phases/` and `design/`
 - blocks writes to `.phaseproof/gates`, `approvals`, `runs` and `blocks`, by file tools or by Bash, and blocks running `approve` from Bash
+- catches shell writes: while code is closed, a `PreToolUse` hook records `git status` before every Bash call and `PostToolUse` / `PostToolUseFailure` hooks compare it after. If the command changed, committed or wiped code (including your own uncommitted changes), Claude is told which files and asked to stop and wait for you, and you get a notice too. phaseproof itself never modifies or deletes a file, and never tells Claude to run a destructive fix
 
 In any project without `.phaseproof/state.json` it does nothing. If the hook gets input it cannot parse, it allows the call rather than locking your session.
 
-It is a guardrail against drift, not a security boundary. A determined agent can still write code through a shell command, and a review report is model output like any other. What it reliably stops is the common failure: an agent that skips the plan, skips the review, or calls a phase done with red tests.
+It is a guardrail against drift, not a security boundary. The shell guard detects writes after the fact; it does not prevent or undo them. It only sees what `git status` sees: gitignored or excluded paths, files marked assume-unchanged, changes inside nested repos, files outside the project, background and detached processes, commands interrupted before they finish, a command that deletes `.git` or the guard's own records, and network calls are out of its reach. Files over 1 MB, and runs with more than 2000 dirty files, are compared by size and modification time only, so a same-size rewrite that keeps the timestamp goes unnoticed. It cannot tell who made a change, so an edit you save in your editor during a command is reported too. For real prevention, use an OS-level sandbox. A review report is model output like any other. What it reliably stops is the common failure: an agent that skips the plan, skips the review, or calls a phase done with red tests.
 
 ## What it writes in your project
 
@@ -121,6 +122,7 @@ Commit `.phaseproof/` with the code. The approvals and gates are the audit trail
 ## What it runs and sends
 
 - The hook runs `node ${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs` before file edits and Bash calls. It reads files under `.phaseproof/` in your project and prints an allow or deny decision. It makes no network calls.
+- While code is closed, `scripts/hook.mjs` and `scripts/post.mjs` run `git status`, `git rev-parse` and `git diff --name-only` around Bash calls to find shell writes to code. They write only short-lived records to `phaseproof/` inside the git directory (`.git/phaseproof/`, or the worktree's or submodule's own git dir), holding paths, sizes and hashes but no file contents, and never change your files.
 - `scripts/phaseproof.mjs` reads and writes files under `.phaseproof/`, and runs `git rev-parse HEAD` to record the commit.
 - `check` and `gate` run the commands you list in `.phaseproof/config.json` (your tests, typecheck, lint) through your shell, in your project directory. Nothing else is executed.
 - No telemetry, no data leaves your machine, no packages are downloaded. The researcher and ship-verifier agents use Claude's own WebSearch and WebFetch tools when a skill asks them to.
@@ -136,7 +138,7 @@ No server, no telemetry, nothing collected. See [PRIVACY.md](PRIVACY.md).
 
 ## Status
 
-v0.2.2. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
+v0.3.0. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
 
 ## Related projects
 
