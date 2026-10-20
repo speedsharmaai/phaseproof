@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2 - 2026-10-20
+
+- Every agent gets a senior role and user-first checks: first five seconds, one primary action, plain copy, useful empty and error states, contrast and tap targets, failure behaviour the user sees, slow paths
+- The design skill designs from the user's point of view
+
 ## 0.2.1 - 2026-10-20
 
 - `init --phase NN` starts an existing project at the phase it is on

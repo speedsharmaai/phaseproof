@@ -1,7 +1,7 @@
 {
   "name": "phaseproof",
   "displayName": "phaseproof",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Docs, design, build and ship in phases. Code stays closed until a phase is written, reviewed and approved, and every phase is checked by an independent reviewer agent on a stronger model.",
   "author": {
     "name": "Sanjeev Sharma",
