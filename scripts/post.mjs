@@ -11,7 +11,11 @@ export function respond(raw, projectDir = process.env.CLAUDE_PROJECT_DIR) {
     const result = verify(root, input.tool_use_id);
     if (!result) return '';
     const reason = closedReason(root) ?? 'the phase was closed when the command started.';
-    return JSON.stringify({ decision: 'block', reason: describeViolation(reason, result) });
+    const message = describeViolation(reason, result);
+    if (input.hook_event_name === 'PostToolUseFailure') {
+      return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUseFailure', additionalContext: message } });
+    }
+    return JSON.stringify({ decision: 'block', reason: message });
   } catch {
     return '';
   }

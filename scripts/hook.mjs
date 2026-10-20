@@ -9,7 +9,9 @@ export function respond(raw, projectDir = process.env.CLAUDE_PROJECT_DIR) {
     const root = projectDir || input.cwd;
     const d = decide({ root, toolName: input.tool_name, toolInput: input.tool_input ?? {} });
     if (d.allow) {
-      if (input.tool_name === 'Bash' && isActive(root) && closedReason(root)) snapshot(root, input.tool_use_id);
+      if (input.tool_name === 'Bash' && isActive(root) && closedReason(root)) {
+        snapshot(root, input.tool_use_id, { background: Boolean(input.tool_input?.run_in_background) });
+      }
       return '';
     }
     return JSON.stringify({
