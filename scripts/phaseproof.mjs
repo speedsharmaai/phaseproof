@@ -12,6 +12,7 @@ import {
   loadState,
   padPhase,
   phaseDir,
+  phaseSize,
   ppPath,
   readJson,
   readText,
@@ -19,10 +20,12 @@ import {
   runFile,
   scopeChanged,
   scopeHash,
+  scopeText,
   sha256,
   writeJson,
 } from './lib/project.mjs';
 import { parseVerdict } from './lib/verdict.mjs';
+import { testTampering } from './lib/tests-guard.mjs';
 
 const USAGE = `usage: phaseproof <command>
 
@@ -86,8 +89,8 @@ const commands = {
     const approved = existsSync(approvalFile(root, phase));
     const block = readJson(blockFile(root, phase), null);
     const lines = [
-      `phase ${phase}${dir ? ` (${dir.split(/[\\/]/).pop()})` : ' (no phase folder yet)'}`,
-      `  docs review  ${docs.pass ? 'pass' : docs.reason}`,
+      `phase ${phase}${dir ? ` (${dir.split(/[\\/]/).pop()})` : ' (no phase folder yet)'}${phaseSize(root, phase) === 'quick' ? ', quick' : ''}`,
+      `  docs review  ${docs.pass ? 'pass' : phaseSize(root, phase) === 'quick' ? 'not needed for a quick phase' : docs.reason}`,
       `  approved     ${approved ? (scopeChanged(root, phase) ? 'stale, scope changed since approval' : 'yes') : 'no'}`,
       `  checks       ${run ? (allPassed(run.results) ? 'pass' : 'failing') : 'not run'}`,
       `  code review  ${code.pass ? 'pass' : code.reason}`,
@@ -103,11 +106,13 @@ const commands = {
     if (phase !== current) refuse(`current phase is ${current}, not ${phase}`);
     const dir = phaseDir(root, phase);
     if (!dir || !existsSync(join(dir, 'scope.md'))) refuse(`write phases/phase-${phase}-<name>/scope.md first`);
-    const docs = sha256(requireReview(root, phase, 'docs'));
+    const quick = phaseSize(root, phase) === 'quick';
+    const docsText = quick ? readText(reviewFile(root, phase, 'docs')) : requireReview(root, phase, 'docs');
+    const docs = docsText ? sha256(docsText) : null;
     if (existsSync(join(dir, 'screens.md'))) requireReview(root, phase, 'design');
     const scope = scopeHash(root, phase);
     const previous = readJson(approvalFile(root, phase), null);
-    if (previous?.scopeHash && previous.scopeHash !== scope && previous.docsReview === docs) {
+    if (!quick && previous?.scopeHash && previous.scopeHash !== scope && previous.docsReview === docs) {
       refuse(`phase ${phase} scope changed since the last approval. Get a fresh docs review first.`);
     }
     writeJson(approvalFile(root, phase), { phase, approvedAt: new Date().toISOString(), head: gitHead(root), scopeHash: scope, docsReview: docs });
@@ -130,8 +135,16 @@ const commands = {
     if (!existsSync(approvalFile(root, phase))) refuse(`phase ${phase} was never approved`);
     if (existsSync(blockFile(root, phase))) refuse(`phase ${phase} is blocked. The owner has to approve it again first`);
     if (scopeChanged(root, phase)) refuse(`phase ${phase} scope changed since approval. Review it and approve again`);
-    const docs = requireReview(root, phase, 'docs');
+    const docs = phaseSize(root, phase) === 'quick' ? readText(reviewFile(root, phase, 'docs')) : requireReview(root, phase, 'docs');
     const code = requireReview(root, phase, 'code');
+    const tampered = testTampering(root, readJson(approvalFile(root, phase), {}).head, scopeText(root, phase));
+    if (tampered) {
+      const lines = [
+        ...tampered.removed.map((f) => `removed ${f}`),
+        ...tampered.skipped.map((s) => `skip or focus added in ${s.file}: ${s.line}`),
+      ];
+      refuse(`tests were weakened since approval, gate stays open:\n  ${lines.join('\n  ')}\nIf this is intended, name the files in scope.md under **Removes tests:** or **Skips tests:**, get it reviewed and approved again.`);
+    }
     const results = checkResults(root, phase);
     out(describe(results));
     if (!allPassed(results)) refuse('checks failing, gate stays open');
@@ -140,7 +153,7 @@ const commands = {
       passedAt: new Date().toISOString(),
       head: gitHead(root),
       checks: results.map(({ cmd, code: c, ms }) => ({ cmd, code: c, ms })),
-      reviews: { docs: sha256(docs), code: sha256(code) },
+      reviews: { docs: docs ? sha256(docs) : null, code: sha256(code) },
     });
     out(`phase ${phase} gate: PASS`);
   },

@@ -46,6 +46,7 @@ phaseproof is the process I ran by hand across a dozen shipped projects, packed 
 |---|---|
 | `/phaseproof:kickoff [idea]` | README with the one number and rules, phase list, first ADR, gate turned on |
 | `/phaseproof:phase NN name` | Writes the phase's scope and tasks, doc-reviewer checks them |
+| `/phaseproof:quick what` | Small change, light process: one-screen scope, your approval, one code review, gate |
 | `/phaseproof:design NN` | Designs and exports the phase's screens, design-reviewer checks the exports |
 | `/phaseproof:approve NN` | Owner sign-off. Claude cannot run it for you |
 | `/phaseproof:build` | Builder, checks, code-reviewer, gate, progress notes |
@@ -80,11 +81,14 @@ To run an agent on a different model, copy its file from `agents/` into `~/.clau
 When `.phaseproof/state.json` exists in a project, a `PreToolUse` hook:
 
 - blocks `Write`, `Edit`, `MultiEdit` and `NotebookEdit` on code until the current phase is approved, and again after its gate passes
+- refuses to close a phase when test files were deleted or `.skip`/`.only`/`xit`/`@pytest.mark.skip`-style markers were added since approval, unless scope.md names them under **Removes tests:** or **Skips tests:**
 - closes code again when `scope.md`, `tasks.md` or `screens.md` change after approval; re-approving then needs a fresh docs review
 - closes code when a phase is blocked after two failed code reviews, until the owner approves it again
 - always allows Markdown, `docs/`, `phases/` and `design/`
 - blocks writes to `.phaseproof/gates`, `approvals`, `runs` and `blocks`, by file tools or by Bash, and blocks running `approve` from Bash
 - catches shell writes: while code is closed, a `PreToolUse` hook records `git status` before every Bash call and `PostToolUse` / `PostToolUseFailure` hooks compare it after. If the command changed, committed or wiped code (including your own uncommitted changes), Claude is told which files and asked to stop and wait for you, and you get a notice too. phaseproof itself never modifies or deletes a file, and never tells Claude to run a destructive fix
+
+At the start of every session, and after `/compact`, `/clear` or a resume, a `SessionStart` hook puts the current phase, its Goal and Done when, and whether code is open back into Claude's context, so a long session does not drift off the plan.
 
 In any project without `.phaseproof/state.json` it does nothing. If the hook gets input it cannot parse, it allows the call rather than locking your session.
 
@@ -98,6 +102,7 @@ your-project/
 ├── WORKLIST.md                   now, next, waiting on the owner
 ├── docs/
 │   ├── decisions/0001-stack.md   ADRs
+│   ├── learnings.md              what earlier phases taught, read before planning and review
 │   └── design/                   screens table, tokens, exports/
 ├── phases/
 │   ├── README.md                 order and the kill line
@@ -121,6 +126,7 @@ Commit `.phaseproof/` with the code. The approvals and gates are the audit trail
 
 ## What it runs and sends
 
+- `scripts/session.mjs` runs at session start and after compact, clear or resume. It reads `.phaseproof/` and `phases/` and prints a short status for Claude; it writes nothing.
 - The hook runs `node ${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs` before file edits and Bash calls. It reads files under `.phaseproof/` in your project and prints an allow or deny decision. It makes no network calls.
 - While code is closed, `scripts/hook.mjs` and `scripts/post.mjs` run `git status`, `git rev-parse` and `git diff --name-only` around Bash calls to find shell writes to code. They write only short-lived records to `phaseproof/` inside the git directory (`.git/phaseproof/`, or the worktree's or submodule's own git dir), holding paths, sizes and hashes but no file contents, and never change your files.
 - `scripts/phaseproof.mjs` reads and writes files under `.phaseproof/`, and runs `git rev-parse HEAD` to record the commit.
@@ -138,7 +144,7 @@ No server, no telemetry, nothing collected. See [PRIVACY.md](PRIVACY.md).
 
 ## Status
 
-v0.3.0. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
+v0.4.0. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
 
 ## Related projects
 

@@ -21,6 +21,9 @@ Check:
 - what the end user sees when this fails: a clear message and a safe state, not a stack trace or lost work
 - slow paths a real user will hit: N+1 queries, unbounded loops, missing pagination or timeouts
 - names and structure a new contributor can follow without asking the author
+- test changes: deleted tests, skipped or focused tests, loosened assertions, or expected values changed to match new behaviour are blockers unless scope.md says so
+- a scope marked `**Size:** quick` whose diff touches data models, auth, money, migrations or more than a handful of files is a blocker: it needed a full phase
+- anything `docs/learnings.md` warns about, if it exists
 
 Reply in exactly this shape:
 

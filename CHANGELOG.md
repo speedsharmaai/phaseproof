@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0 - 2026-10-20
+
+- `/phaseproof:quick` for small changes: `**Size:** quick` scopes skip the docs review and design step, but still need the owner's approval, one code review and the gate
+- Test guard: the gate refuses when test files were deleted or skip/only markers added since approval, unless the scope names them
+- SessionStart hook re-states the current phase, its goal and whether code is open after startup, compact, clear and resume
+- Existing codebases: kickoff maps the repo first and records the stack and conventions it actually has
+- `docs/learnings.md`: each phase records what the reviewer caught; planning and both reviewers read it
+- Code reviewer flags weakened tests and quick scopes that were really full phases
+
 ## 0.3.0 - 2026-10-20
 
 - Shell guard: while code is closed, every Bash call is bracketed by a git snapshot and a diff. If the command changed, committed or wiped code, Claude is told which files and asked to stop and wait, and the owner gets a notice. Covers failing commands too (`PostToolUseFailure`)

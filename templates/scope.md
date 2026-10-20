@@ -1,5 +1,7 @@
 # Phase NN - <name>
 
+**Size:** full
+
 **Goal:** <one sentence>
 
 **Done when:** <an observable result on the running system, with a number where one fits>

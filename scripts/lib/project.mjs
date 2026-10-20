@@ -69,6 +69,17 @@ export function scopeHash(root, phase) {
   return sha256(parts.join('\n---\n'));
 }
 
+export function phaseSize(root, phase) {
+  const dir = phaseDir(root, phase);
+  const scope = dir ? readText(join(dir, 'scope.md')) : null;
+  return scope && /^\*\*Size:\*\*\s*quick\b/im.test(scope) ? 'quick' : 'full';
+}
+
+export function scopeText(root, phase) {
+  const dir = phaseDir(root, phase);
+  return (dir && readText(join(dir, 'scope.md'))) ?? '';
+}
+
 export function scopeChanged(root, phase) {
   const approval = readJson(approvalFile(root, phase), null);
   return Boolean(approval?.scopeHash) && approval.scopeHash !== scopeHash(root, phase);
