@@ -1,5 +1,13 @@
 # phaseproof
 
+![phaseproof: make the AI build in phases. Code stays locked until you approve the phase.](.github/assets/header-light.png#gh-light-mode-only)
+![phaseproof: make the AI build in phases. Code stays locked until you approve the phase.](.github/assets/header-dark.png#gh-dark-mode-only)
+
+[![ci](https://github.com/speedsharmaai/phaseproof/actions/workflows/ci.yml/badge.svg)](https://github.com/speedsharmaai/phaseproof/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-1F5A44)](LICENSE)
+[![version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fspeedsharmaai%2Fphaseproof%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=version&color=1F5A44)](CHANGELOG.md)
+![dependencies: 0](https://img.shields.io/badge/dependencies-0-1F5A44)
+
 **A Claude Code plugin that makes AI build in phases.** Docs first, design next, code only after you approve, and every phase checked by an independent reviewer agent on a stronger model before it closes.
 
 A phase is done when its "Done when" line is true on the running system, not when its code compiles.
@@ -23,20 +31,13 @@ phaseproof is the process I ran by hand across a dozen shipped projects, packed 
 
 ## How a phase flows
 
-```mermaid
-flowchart LR
-  A[/phaseproof:phase/] --> B{doc-reviewer<br/>opus}
-  B -- FAIL, max 2 rounds --> A
-  B -- PASS --> D[/phaseproof:design/<br/>if the phase has UI]
-  D --> E[/phaseproof:approve/<br/>owner only]
-  B -- PASS, no UI --> E
-  E --> F[builder<br/>sonnet]
-  F --> G[checks]
-  G --> H{code-reviewer<br/>opus}
-  H -- FAIL, max 2 rounds --> F
-  H -- PASS --> I[gate: re-runs checks<br/>closes the phase]
-  I --> J[/phaseproof:ship/]
-```
+![Eight steps per phase: plan, doc review, design, owner approval, build, code review, gate, ship. Reviews run on Opus and loop back on FAIL, at most twice.](.github/assets/flow-light.png#gh-light-mode-only)
+![Eight steps per phase: plan, doc review, design, owner approval, build, code review, gate, ship. Reviews run on Opus and loop back on FAIL, at most twice.](.github/assets/flow-dark.png#gh-dark-mode-only)
+
+## What you see
+
+![Claude Code output: a Write to src/auth/otp.ts is refused because phase 01 is not approved; after /phaseproof:approve 01 code is open.](.github/assets/terminal-light.png#gh-light-mode-only)
+![Claude Code output: a Write to src/auth/otp.ts is refused because phase 01 is not approved; after /phaseproof:approve 01 code is open.](.github/assets/terminal-dark.png#gh-dark-mode-only)
 
 ## Commands
 
@@ -51,6 +52,9 @@ flowchart LR
 | `/phaseproof:status` | Where the phase stands and the one next step |
 
 ## Model routing
+
+![haiku reads, sonnet builds, opus judges.](.github/assets/routing-light.png#gh-light-mode-only)
+![haiku reads, sonnet builds, opus judges.](.github/assets/routing-dark.png#gh-dark-mode-only)
 
 Every agent pins its own model, so you never switch with `/model` by hand. Cheap models read, the default model builds, the strong model judges.
 
