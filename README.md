@@ -124,6 +124,10 @@ Commit `.phaseproof/` with the code. The approvals and gates are the audit trail
 - Claude Code with plugin support, and Node.js 20 or later on `PATH` (the hook and the gate script are plain Node, no dependencies)
 - Access to the models the agents pin. On a plan without Opus, change the reviewers' model as above.
 
+## Privacy
+
+No server, no telemetry, nothing collected. See [PRIVACY.md](PRIVACY.md).
+
 ## Status
 
 v0.1.1. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.

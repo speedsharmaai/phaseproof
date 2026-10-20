@@ -11,6 +11,9 @@
   "repository": "https://github.com/speedsharmaai/phaseproof",
   "license": "MIT",
   "icon": "./.claude-plugin/icon.png",
+  "privacyPolicyUrl": "https://github.com/speedsharmaai/phaseproof/blob/main/PRIVACY.md",
+  "supportUrl": "https://github.com/speedsharmaai/phaseproof/issues",
+  "documentationUrl": "https://github.com/speedsharmaai/phaseproof#readme",
   "keywords": [
     "claude-code",
     "spec-driven-development",
