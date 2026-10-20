@@ -1,7 +1,7 @@
 import { closedReason } from './lib/decide.mjs';
 import { isMain } from './lib/main.mjs';
 import { isActive } from './lib/project.mjs';
-import { describeViolation, verify } from './lib/shell.mjs';
+import { describeViolation, ownerNotice, verify } from './lib/shell.mjs';
 
 export function respond(raw, projectDir = process.env.CLAUDE_PROJECT_DIR) {
   try {
@@ -12,10 +12,11 @@ export function respond(raw, projectDir = process.env.CLAUDE_PROJECT_DIR) {
     if (!result) return '';
     const reason = closedReason(root) ?? 'the phase was closed when the command started.';
     const message = describeViolation(reason, result);
+    const systemMessage = ownerNotice(result);
     if (input.hook_event_name === 'PostToolUseFailure') {
-      return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUseFailure', additionalContext: message } });
+      return JSON.stringify({ systemMessage, hookSpecificOutput: { hookEventName: 'PostToolUseFailure', additionalContext: message } });
     }
-    return JSON.stringify({ decision: 'block', reason: message });
+    return JSON.stringify({ systemMessage, decision: 'block', reason: message });
   } catch {
     return '';
   }

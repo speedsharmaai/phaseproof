@@ -25,7 +25,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/post.mjs"
             ],
-            "timeout": 60
+            "timeout": 30
           }
         ]
       }
@@ -40,7 +40,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/post.mjs"
             ],
-            "timeout": 60
+            "timeout": 30
           }
         ]
       }

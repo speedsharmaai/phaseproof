@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describeViolation, dirtyCodeFiles, snapshot, verify } from '../scripts/lib/shell.mjs';
+import { describeViolation, dirtyCodeFiles, ownerNotice, snapshot, verify } from '../scripts/lib/shell.mjs';
 import { respond as pre } from '../scripts/hook.mjs';
 import { respond as post } from '../scripts/post.mjs';
 import { approvedProject, cli, put, tempProject } from './helpers.mjs';
@@ -23,98 +23,167 @@ function closedRepo(t) {
   return root;
 }
 
-test('init ignores snapshots and quarantine', (t) => {
-  const root = closedRepo(t);
-  assert.equal(read(root, '.phaseproof/.gitignore'), 'shell/\nquarantine/\n');
+const changedBy = (root, id, act) => {
+  assert.equal(snapshot(root, id), true);
+  act();
+  return verify(root, id);
+};
+
+test('init ignores snapshots', (t) => {
+  assert.equal(read(closedRepo(t), '.phaseproof/.gitignore'), 'shell/\n');
 });
 
-test('dirtyCodeFiles skips docs, markdown and phaseproof records', (t) => {
+test('dirtyCodeFiles skips docs, markdown and phaseproof records, and parses renames', (t) => {
   const root = closedRepo(t);
-  put(root, 'src/a.js', 'changed\n');
   put(root, 'src/new.js', 'new\n');
   put(root, 'docs/notes.txt', 'doc\n');
   put(root, 'NOTES.md', 'md\n');
   put(root, '.phaseproof/reviews/phase-01-docs.md', 'x');
-  assert.deepEqual(dirtyCodeFiles(root).sort(), ['src/a.js', 'src/new.js']);
-});
-
-test('dirtyCodeFiles is null outside git', (t) => {
+  git(root, 'mv', 'src/a.js', 'src/b.js');
+  assert.deepEqual(dirtyCodeFiles(root).sort(), ['src/a.js', 'src/b.js', 'src/new.js']);
   assert.equal(dirtyCodeFiles(tempProject(t)), null);
 });
 
-test('shell edits to clean and new files are rolled back and quarantined', (t) => {
+test('edits, new files and deletes are reported and no file is touched', (t) => {
   const root = closedRepo(t);
-  assert.equal(snapshot(root, 'tu1'), true);
-  put(root, 'src/a.js', 'by shell\n');
-  put(root, 'src/new.js', 'sneaky\n');
-  put(root, 'docs/plan.txt', 'allowed\n');
-  const r = verify(root, 'tu1');
-  assert.deepEqual(r.changed, ['src/a.js', 'src/new.js']);
-  assert.deepEqual(r.restored, ['src/a.js', 'src/new.js']);
-  assert.equal(read(root, 'src/a.js'), 'original\n');
-  assert.equal(existsSync(join(root, 'src/new.js')), false);
-  assert.equal(read(root, `${r.quarantine}/src/a.js`), 'by shell\n');
-  assert.equal(read(root, `${r.quarantine}/src/new.js`), 'sneaky\n');
-  assert.equal(read(root, 'docs/plan.txt'), 'allowed\n');
+  put(root, 'src/keep.js', 'tracked\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'keep');
+  const r = changedBy(root, 'e1', () => {
+    put(root, 'src/a.js', 'by shell\n');
+    put(root, 'src/new.js', 'sneaky\n');
+    rmSync(join(root, 'src/keep.js'));
+    put(root, 'docs/plan.txt', 'allowed\n');
+  });
+  assert.deepEqual(r.changed, ['src/a.js', 'src/keep.js', 'src/new.js']);
+  assert.equal(read(root, 'src/a.js'), 'by shell\n');
+  assert.equal(read(root, 'src/new.js'), 'sneaky\n');
+  assert.equal(existsSync(join(root, '.phaseproof/quarantine')), false);
 });
 
-test('uncommitted work from before the command is put back, not wiped', (t) => {
+test('files that were already dirty only count when the command changes them', (t) => {
   const root = closedRepo(t);
   put(root, 'src/a.js', 'my own edit\n');
-  snapshot(root, 'tu2');
-  put(root, 'src/a.js', 'by shell\n');
-  verify(root, 'tu2');
-  assert.equal(read(root, 'src/a.js'), 'my own edit\n');
+  assert.equal(changedBy(root, 'd1', () => {}), null);
+  assert.deepEqual(changedBy(root, 'd2', () => put(root, 'src/a.js', 'by shell\n')).changed, ['src/a.js']);
 });
 
-test('a file deleted by the shell comes back', (t) => {
+test('glob characters are literal paths', (t) => {
   const root = closedRepo(t);
-  snapshot(root, 'tu3');
-  rmSync(join(root, 'src/a.js'));
-  const r = verify(root, 'tu3');
-  assert.deepEqual(r.restored, ['src/a.js']);
-  assert.equal(read(root, 'src/a.js'), 'original\n');
+  put(root, 'src/[ab].js', 'route\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'route');
+  put(root, 'src/a.js', 'my edit\n');
+  assert.deepEqual(changedBy(root, 'g1', () => put(root, 'src/[ab].js', 'by shell\n')).changed, ['src/[ab].js']);
 });
 
-test('nothing changed means nothing to report', (t) => {
+test('a retargeted symlink is reported', { skip: process.platform === 'win32' }, (t) => {
   const root = closedRepo(t);
-  put(root, 'src/a.js', 'dirty before\n');
-  snapshot(root, 'tu4');
-  assert.equal(verify(root, 'tu4'), null);
-  assert.equal(verify(root, 'never-snapshotted'), null);
+  symlinkSync('a.js', join(root, 'src/link.js'));
+  const r = changedBy(root, 'l1', () => {
+    rmSync(join(root, 'src/link.js'));
+    symlinkSync('/etc/hosts', join(root, 'src/link.js'));
+  });
+  assert.deepEqual(r.changed, ['src/link.js']);
 });
 
-test('warn mode reports without rolling back, off mode takes no snapshot', (t) => {
-  const root = closedRepo(t);
-  put(root, '.phaseproof/config.json', JSON.stringify({ checks: [], shellGuard: 'warn' }));
-  snapshot(root, 'tu5');
-  put(root, 'src/a.js', 'by shell\n');
-  const r = verify(root, 'tu5');
-  assert.equal(r.mode, 'warn');
-  assert.equal(read(root, 'src/a.js'), 'by shell\n');
-  assert.match(describeViolation('phase 01 is not approved', r), /Nothing was rolled back/);
-  put(root, '.phaseproof/config.json', JSON.stringify({ checks: [], shellGuard: 'off' }));
-  assert.equal(snapshot(root, 'tu6'), false);
+test('a project inside a bigger repo only watches its own folder', (t) => {
+  const top = tempProject(t);
+  git(top, 'init', '-q');
+  put(top, 'app/src/a.js', 'original\n');
+  put(top, 'other/b.js', 'sibling\n');
+  const app = join(top, 'app');
+  cli(app, 'init');
+  git(top, 'add', '-A');
+  git(top, 'commit', '-qm', 'init');
+  const r = changedBy(app, 'm1', () => {
+    put(app, 'src/a.js', 'by shell\n');
+    put(app, 'docs/note.txt', 'allowed\n');
+    put(app, '.phaseproof/runs/x.json', '{}');
+    put(top, 'other/b.js', 'sibling edit\n');
+  });
+  assert.deepEqual(r.changed, ['src/a.js']);
 });
 
-test('hooks end to end: closed phase rolls back, open phase leaves the shell alone', (t) => {
+test('commits made by the shell are reported, including the first commit', (t) => {
   const root = closedRepo(t);
-  const bash = (id) => JSON.stringify({ cwd: root, tool_name: 'Bash', tool_use_id: id, tool_input: { command: 'echo x > src/a.js' } });
-  assert.equal(pre(bash('e1'), root), '');
+  const r = changedBy(root, 'h1', () => {
+    put(root, 'src/a.js', 'committed by shell\n');
+    git(root, 'commit', '-qam', 'sneaky');
+  });
+  assert.deepEqual(r.committed, ['src/a.js']);
+  assert.match(describeViolation('phase 01 is not approved', r), /moved HEAD, and the new commits change code: src\/a\.js/);
+
+  const fresh = tempProject(t);
+  git(fresh, 'init', '-q');
+  cli(fresh, 'init');
+  const f = changedBy(fresh, 'h2', () => {
+    put(fresh, 'src/x.js', 'x\n');
+    git(fresh, 'add', '-A');
+    git(fresh, 'commit', '-qm', 'first');
+  });
+  assert.deepEqual(f.committed, ['src/x.js']);
+});
+
+test('a nested repo does not switch the guard off', (t) => {
+  const root = closedRepo(t);
+  put(root, 'vendor/lib/x.js', 'x\n');
+  git(join(root, 'vendor/lib'), 'init', '-q');
+  assert.deepEqual(changedBy(root, 'n1', () => put(root, 'src/a.js', 'by shell\n')).changed, ['src/a.js']);
+});
+
+test('many dirty files fall back to size and mtime', (t) => {
+  const root = closedRepo(t);
+  for (let i = 0; i < 2100; i++) put(root, `gen/f${i}.js`, `${i}\n`);
+  const started = Date.now();
+  const r = changedBy(root, 'p1', () => put(root, 'gen/f7.js', 'changed and longer\n'));
+  assert.deepEqual(r.changed, ['gen/f7.js']);
+  assert.ok(Date.now() - started < 20000);
+});
+
+test('background commands are not snapshotted; corrupt snapshots are dropped', (t) => {
+  const root = closedRepo(t);
+  assert.equal(snapshot(root, 'b1', { background: true }), false);
+  put(root, '.phaseproof/shell/bad.json', '{"entries":');
+  assert.equal(verify(root, 'bad'), null);
+  assert.equal(existsSync(join(root, '.phaseproof/shell/bad.json')), false);
+});
+
+test('projects from 0.2 get the gitignore on first snapshot, existing lines kept', (t) => {
+  const root = closedRepo(t);
+  writeFileSync(join(root, '.phaseproof/.gitignore'), 'custom/\n');
+  snapshot(root, 'i1');
+  assert.equal(read(root, '.phaseproof/.gitignore'), 'custom/\nshell/\n');
+  assert.equal(readdirSync(join(root, '.phaseproof/shell')).filter((n) => n.endsWith('.tmp')).length, 0);
+});
+
+test('hooks end to end: closed phase reports to Claude and the owner, open phase stays quiet', (t) => {
+  const root = closedRepo(t);
+  const input = (id, event) => JSON.stringify({ cwd: root, hook_event_name: event, tool_name: 'Bash', tool_use_id: id, tool_input: { command: 'x' } });
+  pre(input('e1', 'PreToolUse'), root);
   put(root, 'src/a.js', 'x\n');
-  const out = JSON.parse(post(bash('e1'), root));
+  const out = JSON.parse(post(input('e1', 'PostToolUse'), root));
   assert.equal(out.decision, 'block');
-  assert.match(out.reason, /changed code while code is closed \(src\/a\.js\)/);
-  assert.match(out.reason, /phase 01 is not approved/);
-  assert.equal(read(root, 'src/a.js'), 'original\n');
+  assert.match(out.reason, /code changed during that shell command while code is closed: src\/a\.js/);
+  assert.match(out.reason, /did not touch any file/);
+  assert.match(out.systemMessage, /Claude was told to undo it/);
+
+  pre(input('e2', 'PreToolUse'), root);
+  put(root, 'src/a.js', 'y\n');
+  const fail = JSON.parse(post(input('e2', 'PostToolUseFailure'), root));
+  assert.equal(fail.hookSpecificOutput.hookEventName, 'PostToolUseFailure');
+  assert.match(fail.hookSpecificOutput.additionalContext, /src\/a\.js/);
 
   const open = approvedProject(t);
   git(open, 'init', '-q');
-  const ob = JSON.stringify({ cwd: open, tool_name: 'Bash', tool_use_id: 'e2', tool_input: { command: 'touch src/b.js' } });
+  const ob = JSON.stringify({ cwd: open, tool_name: 'Bash', tool_use_id: 'e3', tool_input: { command: 'x' } });
   pre(ob, open);
   put(open, 'src/b.js', 'fine\n');
   assert.equal(post(ob, open), '');
-  assert.equal(read(open, 'src/b.js'), 'fine\n');
+});
+
+test('owner notice lists every file once', () => {
+  assert.match(ownerNotice({ changed: ['a.js'], committed: ['a.js', 'b.js'] }), /\(a\.js, b\.js\)/);
 });
 
 test('post hook runs as a process and fails open', () => {
@@ -124,166 +193,9 @@ test('post hook runs as a process and fails open', () => {
   assert.equal(r.stdout, '');
 });
 
-test('glob characters in names are literal paths, never patterns', (t) => {
+test('undoing a change back to the committed version is not reported', (t) => {
   const root = closedRepo(t);
-  put(root, 'src/[ab].js', 'route\n');
-  git(root, 'add', '-A');
-  git(root, 'commit', '-qm', 'route');
-  put(root, 'src/a.js', 'my own edit\n');
-  snapshot(root, 'g1');
-  put(root, 'src/[ab].js', 'by shell\n');
-  const r = verify(root, 'g1');
-  assert.deepEqual(r.restored, ['src/[ab].js']);
-  assert.equal(read(root, 'src/[ab].js'), 'route\n');
-  assert.equal(read(root, 'src/a.js'), 'my own edit\n');
-});
-
-test('a failure partway through never loses the state from before the command', (t) => {
-  const root = closedRepo(t);
-  put(root, 'src/z.js', 'USER WORK\n');
-  snapshot(root, 'f1');
-  put(root, 'src/z.js', 'SHELL\n');
-  put(root, 'lib/x/inner.js', 'nested\n');
-  git(join(root, 'lib/x'), 'init', '-q');
-  const r = verify(root, 'f1');
-  assert.equal(read(root, 'src/z.js'), 'USER WORK\n');
-  assert.ok(r.unchecked.includes('lib/x'));
-  const saved = JSON.parse(read(root, `${r.quarantine}/snapshot-before.json`));
-  assert.equal(Buffer.from(saved.entries.find((e) => e.rel === 'src/z.js').content, 'base64').toString(), 'USER WORK\n');
-});
-
-test('symlinks are reported, never written through', { skip: process.platform === 'win32' }, (t) => {
-  const root = closedRepo(t);
-  const outside = tempProject(t);
-  put(outside, 'precious.txt', 'PRECIOUS\n');
-  put(root, 'src/t1.js', 't1\n');
-  symlinkSync('t1.js', join(root, 'src/link.js'));
-  snapshot(root, 's1');
-  rmSync(join(root, 'src/link.js'));
-  symlinkSync(join(outside, 'precious.txt'), join(root, 'src/link.js'));
-  const r = verify(root, 's1');
-  assert.deepEqual(r.unchecked, ['src/link.js']);
-  assert.equal(read(outside, 'precious.txt'), 'PRECIOUS\n');
-});
-
-test('a project inside a bigger repo only guards its own folder', (t) => {
-  const top = tempProject(t);
-  git(top, 'init', '-q');
-  put(top, 'app/src/a.js', 'original\n');
-  put(top, 'other/b.js', 'sibling\n');
-  const app = join(top, 'app');
-  cli(app, 'init');
-  git(top, 'add', '-A');
-  git(top, 'commit', '-qm', 'init');
-  put(top, 'other/b.js', 'sibling edit\n');
-  snapshot(app, 'm1');
-  put(app, 'src/a.js', 'by shell\n');
-  put(app, 'docs/note.txt', 'allowed\n');
-  put(app, '.phaseproof/runs/x.json', '{}');
-  const r = verify(app, 'm1');
-  assert.deepEqual(r.changed, ['src/a.js']);
-  assert.deepEqual(r.restored, ['src/a.js']);
-  assert.equal(read(app, 'src/a.js'), 'original\n');
-  assert.equal(read(app, 'docs/note.txt'), 'allowed\n');
-  assert.equal(read(top, 'other/b.js'), 'sibling edit\n');
-});
-
-test('a commit made by the shell is reported, not reverted', (t) => {
-  const root = closedRepo(t);
-  snapshot(root, 'h1');
-  put(root, 'src/a.js', 'committed by shell\n');
-  git(root, 'commit', '-qam', 'sneaky');
-  const r = verify(root, 'h1');
-  assert.equal(r.mode, 'head-moved');
-  assert.deepEqual(r.changed, ['src/a.js']);
-  assert.equal(read(root, 'src/a.js'), 'committed by shell\n');
-  assert.match(describeViolation('phase 01 is not approved', r), /moved HEAD/);
-});
-
-test('a soft reset touches no files and deletes nothing', (t) => {
-  const root = closedRepo(t);
-  put(root, 'src/n.js', 'new\n');
-  git(root, 'add', '-A');
-  git(root, 'commit', '-qm', 'second');
-  snapshot(root, 'h2');
-  git(root, 'reset', '--soft', 'HEAD~1');
-  verify(root, 'h2');
-  assert.equal(read(root, 'src/n.js'), 'new\n');
-});
-
-test('a nested repo already present does not switch the guard off', (t) => {
-  const root = closedRepo(t);
-  put(root, 'vendor/lib/x.js', 'x\n');
-  git(join(root, 'vendor/lib'), 'init', '-q');
-  assert.equal(snapshot(root, 'n1'), true);
   put(root, 'src/a.js', 'by shell\n');
-  assert.deepEqual(verify(root, 'n1').restored, ['src/a.js']);
-});
-
-test('two shell calls at once: report, do not guess', (t) => {
-  const root = closedRepo(t);
-  snapshot(root, 'c1');
-  snapshot(root, 'c2');
-  put(root, 'src/a.js', 'by one of them\n');
-  const r = verify(root, 'c1');
-  assert.equal(r.mode, 'concurrent');
-  assert.equal(read(root, 'src/a.js'), 'by one of them\n');
-  assert.match(describeViolation('closed', r), /another shell command was running/);
-});
-
-test('background commands are not snapshotted', (t) => {
-  const root = closedRepo(t);
-  assert.equal(snapshot(root, 'b1', { background: true }), false);
-});
-
-test('a failing shell command is still caught and reported as extra context', (t) => {
-  const root = closedRepo(t);
-  const input = (event) => JSON.stringify({ cwd: root, hook_event_name: event, tool_name: 'Bash', tool_use_id: 'pf1', tool_input: { command: 'x' } });
-  pre(input('PreToolUse'), root);
-  put(root, 'src/a.js', 'by shell then exit 1\n');
-  const out = JSON.parse(post(input('PostToolUseFailure'), root));
-  assert.equal(out.hookSpecificOutput.hookEventName, 'PostToolUseFailure');
-  assert.match(out.hookSpecificOutput.additionalContext, /Rolled back: src\/a\.js/);
+  assert.equal(changedBy(root, 'u1', () => git(root, 'checkout', '--', 'src/a.js')), null);
   assert.equal(read(root, 'src/a.js'), 'original\n');
-});
-
-test('projects from 0.2 get the gitignore on first snapshot, existing lines kept', (t) => {
-  const root = closedRepo(t);
-  put(root, '.phaseproof/.gitignore', 'custom/\n');
-  snapshot(root, 'i1');
-  assert.equal(read(root, '.phaseproof/.gitignore'), 'custom/\nshell/\nquarantine/\n');
-});
-
-test('renames are parsed and fully undone, index included', (t) => {
-  const root = closedRepo(t);
-  snapshot(root, 'r1');
-  git(root, 'mv', 'src/a.js', 'src/b.js');
-  assert.deepEqual(dirtyCodeFiles(root).sort(), ['src/a.js', 'src/b.js']);
-  verify(root, 'r1');
-  assert.equal(read(root, 'src/a.js'), 'original\n');
-  assert.equal(existsSync(join(root, 'src/b.js')), false);
-  assert.equal(git(root, 'status', '--porcelain', '--', 'src').stdout, '');
-});
-
-test('small source edits are snapshotted before big artifacts use the budget', (t) => {
-  const root = closedRepo(t);
-  put(root, 'build.bin', Buffer.alloc(6 * 1024 * 1024, 1));
-  put(root, 'src/a.js', 'small edit\n');
-  snapshot(root, 'z1');
-  put(root, 'src/a.js', 'by shell\n');
-  put(root, 'build.bin', Buffer.alloc(6 * 1024 * 1024, 2));
-  const r = verify(root, 'z1');
-  assert.equal(read(root, 'src/a.js'), 'small edit\n');
-  assert.deepEqual(r.failed, [{ rel: 'build.bin', why: 'too large to snapshot' }]);
-});
-
-test('many new files roll back in batches', (t) => {
-  const root = closedRepo(t);
-  snapshot(root, 'p1');
-  for (let i = 0; i < 400; i++) put(root, `gen/f${i}.js`, `${i}\n`);
-  const started = Date.now();
-  const r = verify(root, 'p1');
-  assert.equal(r.restored.length, 400);
-  assert.equal(existsSync(join(root, 'gen')), false);
-  assert.ok(Date.now() - started < 20000);
 });

@@ -84,11 +84,11 @@ When `.phaseproof/state.json` exists in a project, a `PreToolUse` hook:
 - closes code when a phase is blocked after two failed code reviews, until the owner approves it again
 - always allows Markdown, `docs/`, `phases/` and `design/`
 - blocks writes to `.phaseproof/gates`, `approvals`, `runs` and `blocks`, by file tools or by Bash, and blocks running `approve` from Bash
-- catches shell writes: while code is closed, a `PreToolUse` hook snapshots `git status` before every Bash call and a `PostToolUse` hook diffs it after. Code files the command changed are rolled back, the shell's version is saved under `.phaseproof/quarantine/`, and Claude is told what happened and why. Uncommitted work from before the command is put back as it was, not wiped. Set `"shellGuard": "warn"` in `.phaseproof/config.json` to report without rolling back, or `"off"` to disable
+- catches shell writes: while code is closed, a `PreToolUse` hook records `git status` before every Bash call and `PostToolUse` / `PostToolUseFailure` hooks compare it after. If the command changed or committed code, Claude is told which files and asked to undo them, and you get a notice too. phaseproof itself never modifies or deletes a file
 
 In any project without `.phaseproof/state.json` it does nothing. If the hook gets input it cannot parse, it allows the call rather than locking your session.
 
-It is a guardrail against drift, not a security boundary. The shell guard detects and undoes writes after the fact; it does not prevent them. It only sees files git sees, so gitignored paths, files outside the project, network calls and running processes are out of its reach. For real prevention, use an OS-level sandbox. A review report is model output like any other. What it reliably stops is the common failure: an agent that skips the plan, skips the review, or calls a phase done with red tests.
+It is a guardrail against drift, not a security boundary. The shell guard detects writes after the fact; it does not prevent or undo them. It only sees files git sees, so gitignored paths, files outside the project, network calls and running processes are out of its reach, and an edit you make in your editor during a command is reported too. For real prevention, use an OS-level sandbox. A review report is model output like any other. What it reliably stops is the common failure: an agent that skips the plan, skips the review, or calls a phase done with red tests.
 
 ## What it writes in your project
 
@@ -114,7 +114,7 @@ your-project/
     ├── approvals/                owner sign-offs
     ├── runs/                     last check results
     ├── blocks/                   phases stopped after two failed reviews
-    ├── quarantine/               shell writes that were rolled back (gitignored)
+    ├── shell/                    short-lived snapshots around Bash calls (gitignored)
     └── gates/                    closed phases, with check results and review hashes
 ```
 
@@ -123,7 +123,7 @@ Commit `.phaseproof/` with the code. The approvals and gates are the audit trail
 ## What it runs and sends
 
 - The hook runs `node ${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs` before file edits and Bash calls. It reads files under `.phaseproof/` in your project and prints an allow or deny decision. It makes no network calls.
-- While code is closed, `scripts/hook.mjs` and `scripts/post.mjs` run `git status`, `git cat-file` and `git checkout HEAD -- <file>` around Bash calls to find and roll back shell writes to code. They write only under `.phaseproof/shell/` and `.phaseproof/quarantine/`.
+- While code is closed, `scripts/hook.mjs` and `scripts/post.mjs` run `git status`, `git rev-parse` and `git diff --name-only` around Bash calls to find shell writes to code. They write only under `.phaseproof/shell/` (paths and hashes, no file contents) and never change your files.
 - `scripts/phaseproof.mjs` reads and writes files under `.phaseproof/`, and runs `git rev-parse HEAD` to record the commit.
 - `check` and `gate` run the commands you list in `.phaseproof/config.json` (your tests, typecheck, lint) through your shell, in your project directory. Nothing else is executed.
 - No telemetry, no data leaves your machine, no packages are downloaded. The researcher and ship-verifier agents use Claude's own WebSearch and WebFetch tools when a skill asks them to.

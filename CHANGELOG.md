@@ -2,9 +2,9 @@
 
 ## 0.3.0 - 2026-10-20
 
-- Shell guard: while code is closed, Bash calls are bracketed by a git snapshot and a diff. Code files a shell command changed are rolled back and quarantined, and Claude is told why. Uncommitted work from before the command is restored, not wiped
-- `shellGuard` config: `revert` (default), `warn`, `off`
-- `init` writes `.phaseproof/.gitignore` for snapshots and quarantine
+- Shell guard: while code is closed, every Bash call is bracketed by a git snapshot and a diff. If the command changed or committed code, Claude is told which files and asked to undo them, and the owner gets a notice. Covers failing commands too (`PostToolUseFailure`)
+- phaseproof never changes or deletes a file for this. An automatic rollback was built first and dropped after two independent reviews found ways it could destroy uncommitted work
+- `init` writes `.phaseproof/.gitignore`; older projects get it on the first snapshot
 
 ## 0.2.2 - 2026-10-20
 
