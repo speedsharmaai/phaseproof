@@ -122,7 +122,7 @@ Commit `.phaseproof/` with the code. The approvals and gates are the audit trail
 
 ## Status
 
-v0.1.0. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
+v0.1.1. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
 
 ## Related projects
 

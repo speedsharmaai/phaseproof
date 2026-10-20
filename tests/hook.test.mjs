@@ -16,13 +16,13 @@ test('fails open on garbage input', () => {
 
 test('silent when allowed', (t) => {
   const root = tempProject(t);
-  assert.equal(respond(input(root, join(root, 'src/a.js')), {}), '');
+  assert.equal(respond(input(root, join(root, 'src/a.js')), ''), '');
 });
 
 test('emits a deny decision for blocked code', (t) => {
   const root = tempProject(t);
   cli(root, 'init');
-  const out = JSON.parse(respond(input(root, join(root, 'src/a.js')), {}));
+  const out = JSON.parse(respond(input(root, join(root, 'src/a.js')), ''));
   assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(out.hookSpecificOutput.permissionDecisionReason, /^phaseproof: phase 01/);
 });
@@ -32,7 +32,7 @@ test('CLAUDE_PROJECT_DIR wins over cwd', (t) => {
   const other = tempProject(t);
   cli(root, 'init');
   const raw = JSON.stringify({ cwd: other, tool_name: 'Write', tool_input: { file_path: join(root, 'src/a.js') } });
-  assert.notEqual(respond(raw, { CLAUDE_PROJECT_DIR: root }), '');
+  assert.notEqual(respond(raw, root), '');
 });
 
 test('runs as a process over stdin', (t) => {

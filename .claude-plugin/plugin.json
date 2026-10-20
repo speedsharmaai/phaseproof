@@ -1,7 +1,7 @@
 {
   "name": "phaseproof",
   "displayName": "phaseproof",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Docs, design, build and ship in phases. Code stays closed until a phase is written, reviewed and approved, and every phase is checked by an independent reviewer agent on a stronger model.",
   "author": {
     "name": "Sanjeev Sharma",
@@ -10,6 +10,7 @@
   "homepage": "https://github.com/speedsharmaai/phaseproof",
   "repository": "https://github.com/speedsharmaai/phaseproof",
   "license": "MIT",
+  "icon": "./.claude-plugin/icon.png",
   "keywords": [
     "claude-code",
     "spec-driven-development",
