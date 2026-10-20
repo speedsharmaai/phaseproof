@@ -65,7 +65,15 @@ export function phaseDir(root, phase) {
   return phaseDirs(root, phase)[0] ?? null;
 }
 
-const visibleText = (md) => md.replace(/\r/g, '').replace(/```[\s\S]*?```/g, '').replace(/<!--[\s\S]*?-->/g, '');
+function visibleText(md) {
+  let text = md.replace(/\r/g, '').replace(/```[\s\S]*?(```|$)/g, '');
+  let before;
+  do {
+    before = text;
+    text = text.replace(/<!--[\s\S]*?(-->|$)/g, '');
+  } while (text !== before);
+  return text;
+}
 
 const BULLET = /^\s*(?:[-*+]|\d+[.)])\s+/;
 const cleanPath = (v) =>
