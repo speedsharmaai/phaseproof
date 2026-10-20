@@ -1,0 +1,15 @@
+name: Feature
+description: Something phaseproof should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you need
+      description: The problem, not the solution. Where in a phase did you hit it?
+    validations:
+      required: true
+  - type: textarea
+    id: now
+    attributes:
+      label: What you do today instead

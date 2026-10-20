@@ -1,0 +1,23 @@
+name: Bug
+description: phaseproof blocked, allowed or recorded something it shouldn't have
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command or tool call, what you expected, what you got. Include the exact phaseproof message.
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of /phaseproof:status
+      render: text
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: phaseproof version, `claude --version`, `node --version`, and your OS.
+    validations:
+      required: true
