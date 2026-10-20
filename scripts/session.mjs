@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { closedReason } from './lib/decide.mjs';
 import { isMain } from './lib/main.mjs';
-import { approvalFile, blockFile, gateFile, isActive, loadState, phaseDir, phaseSize, scopeField, scopeText } from './lib/project.mjs';
+import { approvalFile, blockFile, gateFile, isActive, loadState, phaseDir, readJson, scopeField, scopeText } from './lib/project.mjs';
 
 const MAX = 1500;
 
@@ -27,7 +27,7 @@ export function context(root) {
       : existsSync(approvalFile(root, phase))
         ? 'approved, building'
         : 'not approved yet, planning';
-  const lines = [`phaseproof is active. Current phase: ${phase}${dir ? ` (${dir.split(/[\\/]/).pop()})` : ''}${phaseSize(root, phase) === 'quick' ? ', quick' : ''}. State: ${state}.`];
+  const lines = [`phaseproof is active. Current phase: ${phase}${dir ? ` (${dir.split(/[\\/]/).pop()})` : ''}${readJson(approvalFile(root, phase), {}).size === 'quick' ? ', approved as quick' : ''}. State: ${state}.`];
   const goal = field(scope, 'Goal');
   const done = field(scope, 'Done when');
   if (goal) lines.push(`Goal: ${goal}`);

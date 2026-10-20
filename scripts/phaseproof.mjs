@@ -13,7 +13,6 @@ import {
   padPhase,
   phaseDir,
   phaseDirs,
-  phaseSize,
   ppPath,
   readJson,
   readText,
@@ -34,7 +33,8 @@ const USAGE = `usage: phaseproof <command>
   init [--check "<cmd>"]... [--phase NN]
                               start tracking this project (checks run before every gate)
   status                      current phase and what it is waiting on
-  approve <phase> [--new-base] owner sign-off that opens code for a phase (also clears a block)
+  approve <phase> [--quick] [--new-base]
+                              owner sign-off that opens code for a phase (also clears a block)
   check [phase]               run the configured checks and record the result
   gate <phase>                re-run checks, read the code review, close the phase
   block [phase]               stop the phase after a failed code review until the owner decides
@@ -51,8 +51,10 @@ function requireOneFolder(root, phase) {
   return dirs[0] ?? null;
 }
 
-const testAllowances = (root, phase) =>
-  ['Removes tests', 'Skips tests'].map((f) => scopeField(scopeText(root, phase), f)).filter((v) => v && v.toLowerCase() !== 'none');
+const removalAllowance = (root, phase) => {
+  const v = scopeField(scopeText(root, phase), 'Removes tests');
+  return v && v.toLowerCase() !== 'none' ? v : '';
+};
 
 function requireActive(root) {
   if (!isActive(root)) refuse('this project is not tracked yet. Run: phaseproof init');
@@ -99,9 +101,10 @@ const commands = {
     const run = readJson(runFile(root, phase), null);
     const approved = existsSync(approvalFile(root, phase));
     const block = readJson(blockFile(root, phase), null);
+    const size = readJson(approvalFile(root, phase), {}).size;
     const lines = [
-      `phase ${phase}${dir ? ` (${dir.split(/[\\/]/).pop()})` : ' (no phase folder yet)'}${phaseSize(root, phase) === 'quick' ? ', quick' : ''}`,
-      `  docs review  ${docs.pass ? 'pass' : phaseSize(root, phase) === 'quick' ? 'not needed for a quick phase' : docs.reason}`,
+      `phase ${phase}${dir ? ` (${dir.split(/[\\/]/).pop()})` : ' (no phase folder yet)'}${size === 'quick' ? ', approved as quick' : ''}`,
+      `  docs review  ${docs.pass ? 'pass' : size === 'quick' ? `skipped, the owner approved it as quick (${docs.reason})` : docs.reason}`,
       `  approved     ${approved ? (scopeChanged(root, phase) ? 'stale, scope changed since approval' : 'yes') : 'no'}`,
       `  checks       ${run ? (allPassed(run.results) ? 'pass' : 'failing') : 'not run'}`,
       `  code review  ${code.pass ? 'pass' : code.reason}`,
@@ -113,13 +116,15 @@ const commands = {
 
   approve(root, args, out) {
     const { phase: current } = requireActive(root);
+    const unknown = args.filter((a) => a.startsWith('--') && !['--quick', '--new-base'].includes(a));
+    if (unknown.length) refuse(`unknown option ${unknown.join(', ')}. Options: --quick, --new-base`);
     const phase = padPhase(args.find((a) => !a.startsWith('--')) ?? current);
     if (phase !== current) refuse(`current phase is ${current}, not ${phase}`);
     const dir = requireOneFolder(root, phase);
     if (!dir || !existsSync(join(dir, 'scope.md'))) refuse(`write phases/phase-${phase}-<name>/scope.md first`);
     const previous = readJson(approvalFile(root, phase), null);
     const existingDocs = readText(reviewFile(root, phase, 'docs'));
-    const quick = phaseSize(root, phase) === 'quick' && previous?.size !== 'full' && !(existingDocs && !parseVerdict(existingDocs).pass);
+    const quick = args.includes('--quick');
     const docsText = quick ? existingDocs : requireReview(root, phase, 'docs');
     const docs = docsText ? sha256(docsText) : null;
     if (existsSync(join(dir, 'screens.md'))) requireReview(root, phase, 'design');
@@ -133,8 +138,8 @@ const commands = {
     const unblocked = existsSync(blockFile(root, phase));
     if (unblocked) rmSync(blockFile(root, phase));
     const notes = [];
-    if (quick) notes.push('Quick phase: no docs review.');
-    for (const a of testAllowances(root, phase)) notes.push(`The scope allows test changes: ${a}.`);
+    if (quick) notes.push(existingDocs && !parseVerdict(existingDocs).pass ? 'Approved as quick even though its docs review failed.' : 'Approved as quick: no docs review.');
+    if (removalAllowance(root, phase)) notes.push(`The scope allows removing tests: ${removalAllowance(root, phase)}.`);
     out(`phase ${phase} approved. Code is open for this phase.${unblocked ? ' Block cleared.' : ''}${notes.length ? ` ${notes.join(' ')}` : ''}`);
   },
 
@@ -156,19 +161,20 @@ const commands = {
     const approval = readJson(approvalFile(root, phase), {});
     const docs = approval.size === 'quick' ? readText(reviewFile(root, phase, 'docs')) : requireReview(root, phase, 'docs');
     const code = requireReview(root, phase, 'code');
-    const tampered = testTampering(root, approval.base ?? approval.head, testAllowances(root, phase).join(','));
-    if (tampered?.unverifiable) {
-      refuse(`the approval's base commit ${tampered.unverifiable.slice(0, 12)} is gone (rebase or gc), so tests can't be compared. The owner runs /phaseproof:approve ${phase} --new-base after checking the tests by hand.`);
+    const tests = testTampering(root, approval.base ?? approval.head, removalAllowance(root, phase));
+    if (tests?.unverifiable) {
+      refuse(`the approval's base commit ${tests.unverifiable.slice(0, 12)} is gone (rebase or gc), so tests can't be compared. The owner runs /phaseproof:approve ${phase} --new-base after checking the tests by hand.`);
     }
-    if (tampered) {
-      const lines = [
-        ...tampered.removed.map((f) => `removed ${f}`),
-        ...tampered.skipped.map((s) => `skip or focus added in ${s.file}: ${s.line}`),
-      ];
-      refuse(`tests were weakened since approval, gate stays open:\n  ${lines.join('\n  ')}\nRestore them. If the owner wants this, they list the files in scope.md under **Removes tests:** or **Skips tests:** and approve again; do not edit scope.md for this yourself.`);
+    if (tests?.removed.length) {
+      refuse(`test files were deleted since approval, gate stays open:\n  ${tests.removed.join('\n  ')}\nRestore them. If the owner wants them gone, they list them in scope.md under **Removes tests:** and approve again; do not edit scope.md for this yourself.`);
     }
+    const warnings = [
+      ...(tests?.skipped ?? []).map((s) => `possible skip or focus added in ${s.file}: ${s.line}`),
+      ...(tests?.incomplete ? ['the skip check could not read every test diff'] : []),
+    ];
     const results = checkResults(root, phase);
     out(describe(results));
+    if (warnings.length) out(`check before trusting this gate:\n  ${warnings.join('\n  ')}`);
     if (!allPassed(results)) refuse('checks failing, gate stays open');
     writeJson(gateFile(root, phase), {
       phase,
@@ -176,6 +182,7 @@ const commands = {
       head: gitHead(root),
       checks: results.map(({ cmd, code: c, ms }) => ({ cmd, code: c, ms })),
       reviews: { docs: docs ? sha256(docs) : null, code: sha256(code) },
+      testWarnings: warnings,
     });
     out(`phase ${phase} gate: PASS`);
   },

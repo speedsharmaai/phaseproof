@@ -57,7 +57,7 @@ export function closedReason(root) {
   }
   if (scopeChanged(root, phase)) {
     const quick = readJson(approvalFile(root, phase), {}).size === 'quick';
-    return `phase ${phase} scope changed after it was approved. ${quick ? 'The owner' : 'Get the docs reviewed again, then the owner'} runs /phaseproof:approve ${phase}.`;
+    return `phase ${phase} scope changed after it was approved. ${quick ? `The owner runs /phaseproof:approve ${phase} --quick again, or reviews the docs first for a full approval.` : `Get the docs reviewed again, then the owner runs /phaseproof:approve ${phase}.`}`;
   }
   if (existsSync(gateFile(root, phase))) {
     return `phase ${phase} already passed its gate. Plan the next phase and get it approved before more code.`;

@@ -46,9 +46,9 @@ phaseproof is the process I ran by hand across a dozen shipped projects, packed 
 |---|---|
 | `/phaseproof:kickoff [idea]` | README with the one number and rules, phase list, first ADR, gate turned on |
 | `/phaseproof:phase NN name` | Writes the phase's scope and tasks, doc-reviewer checks them |
-| `/phaseproof:quick what` | Small change, light process: one-screen scope, your approval, one code review, gate |
+| `/phaseproof:quick what` | Small change, light process: one-screen scope, you approve with `--quick`, one code review, gate |
 | `/phaseproof:design NN` | Designs and exports the phase's screens, design-reviewer checks the exports |
-| `/phaseproof:approve NN` | Owner sign-off. Claude cannot run it for you |
+| `/phaseproof:approve NN [--quick]` | Owner sign-off. `--quick` skips the docs review for a small change. Claude cannot run it for you |
 | `/phaseproof:build` | Builder, checks, code-reviewer, gate, progress notes |
 | `/phaseproof:ship [env]` | Dry run, spare-port boot, deploy on your go, live check, rollback |
 | `/phaseproof:status` | Where the phase stands and the one next step |
@@ -81,8 +81,8 @@ To run an agent on a different model, copy its file from `agents/` into `~/.clau
 When `.phaseproof/state.json` exists in a project, a `PreToolUse` hook:
 
 - blocks `Write`, `Edit`, `MultiEdit` and `NotebookEdit` on code until the current phase is approved, and again after its gate passes
-- refuses to close a phase when test files were deleted or `.skip`/`.only`/`xit`/`@pytest.mark.skip`-style markers were added since approval, unless scope.md names them under **Removes tests:** or **Skips tests:**
-- closes code again when `scope.md`, `tasks.md` or `screens.md` change after approval; re-approving a full phase then needs a fresh docs review. A phase only counts as quick on a plain `**Size:** quick` line, never after a failed docs review, and never if it was approved as full. Each phase number may have one folder
+- refuses to close a phase when test files were deleted since approval (renames don't count), unless scope.md lists them under **Removes tests:** (comma-separated; a path ending in `/` covers a folder). Newly added skip or focus markers (`.skip`, `.only`, `xit`, `@pytest.mark.skip`, `#[ignore]` and similar) are printed as warnings for you and the code reviewer; a pattern list can never be complete, so they warn rather than block
+- closes code again when `scope.md`, `tasks.md` or `screens.md` change after approval; re-approving a full phase then needs a fresh docs review. Only the owner makes a phase quick, with `approve --quick`; nothing in scope.md can. Each phase number may have one folder
 - closes code when a phase is blocked after two failed code reviews, until the owner approves it again
 - always allows Markdown, `docs/`, `phases/` and `design/`
 - blocks writes to `.phaseproof/gates`, `approvals`, `runs` and `blocks`, by file tools or by Bash, and blocks running `approve` from Bash

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -49,7 +49,8 @@ export function phaseDirs(root, phase) {
   return readdirSync(base)
     .sort()
     .filter((n) => n === `phase-${phase}` || n.startsWith(`phase-${phase}-`))
-    .map((n) => join(base, n));
+    .map((n) => join(base, n))
+    .filter((p) => statSync(p).isDirectory());
 }
 
 export function phaseDir(root, phase) {
@@ -78,12 +79,6 @@ export function scopeHash(root, phase) {
   if (!dir) return null;
   const parts = SCOPE_FILES.map((name) => `${name}\n${readText(join(dir, name)) ?? ''}`);
   return sha256(parts.join('\n---\n'));
-}
-
-export function phaseSize(root, phase) {
-  const dir = phaseDir(root, phase);
-  const scope = dir ? readText(join(dir, 'scope.md')) : null;
-  return scopeField(scope, 'Size') === 'quick' ? 'quick' : 'full';
 }
 
 export function scopeText(root, phase) {
