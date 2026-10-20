@@ -1,0 +1,17 @@
+{
+  "name": "phaseproof",
+  "description": "phaseproof: phase-gated Claude Code workflow with independent reviewer agents.",
+  "owner": {
+    "name": "Sanjeev Sharma",
+    "url": "https://github.com/speedsharmaai"
+  },
+  "plugins": [
+    {
+      "name": "phaseproof",
+      "source": "./",
+      "description": "Docs, design, build and ship in phases, with every phase checked by an independent reviewer agent.",
+      "category": "development",
+      "tags": ["workflow", "code-review", "spec-driven-development", "subagents"]
+    }
+  ]
+}

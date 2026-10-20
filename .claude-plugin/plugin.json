@@ -1,0 +1,23 @@
+{
+  "name": "phaseproof",
+  "displayName": "phaseproof",
+  "version": "0.1.0",
+  "description": "Docs, design, build and ship in phases. Code stays closed until a phase is written, reviewed and approved, and every phase is checked by an independent reviewer agent on a stronger model.",
+  "author": {
+    "name": "Sanjeev Sharma",
+    "url": "https://github.com/speedsharmaai"
+  },
+  "homepage": "https://github.com/speedsharmaai/phaseproof",
+  "repository": "https://github.com/speedsharmaai/phaseproof",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "spec-driven-development",
+    "code-review",
+    "ai-agents",
+    "agentic-coding",
+    "subagents",
+    "model-routing",
+    "quality-gates"
+  ]
+}
