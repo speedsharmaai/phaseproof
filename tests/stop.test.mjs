@@ -33,6 +33,9 @@ test('stopping with red checks and no change since asks once to fix or explain',
   assert.match(out.reason, /last check run for phase 01 failed \(node -e/);
   assert.match(out.reason, /tell the owner plainly that the checks are red/);
   assert.equal(stop(root, { stop_hook_active: true }), '');
+  assert.equal(stop(root), '');
+  cli(root, 'check');
+  assert.equal(JSON.parse(stop(root)).decision, 'block');
 });
 
 test('no nudge once code changed, checks are green, work runs in the background, or the phase is not building', (t) => {
