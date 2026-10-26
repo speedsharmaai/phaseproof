@@ -50,10 +50,10 @@ test('report shows each phase, its reviews and the blockers caught', (t) => {
   cli(root, 'next');
   put(root, 'phases/phase-02-billing/scope.md', SCOPE);
   const r = report(root);
-  assert.match(r, /^01 {5}auth {22}gate passed  3 reviews, 2 failed, 3 blockers; 0 gate warnings$/m);
+  assert.match(r, /^01 {5}auth {22}gate passed  3 reviews, 2 failed, 3 blocker findings; 0 gate warnings$/m);
   assert.match(r, /^02 {5}billing {19}planning {5}-$/m);
-  assert.match(r, /1 phase closed\. 4 reviews recorded \(docs, design and code\), 2 failed, 3 blockers found by reviewers, 0 gate warnings\./);
-  assert.match(r, /Reviewers caught 3 blockers before they reached a gate\./);
+  assert.match(r, /1 phase closed\. 4 reviews recorded \(docs, design and code\), 2 failed, 3 blocker findings across them, 0 gate warnings\./);
+  assert.match(r, /2 reviews failed before a gate/);
   assert.match(cli(root, 'report').out, /phaseproof report/);
 });
 
@@ -79,7 +79,6 @@ test('doctor passes a healthy project and names what is missing', (t) => {
   assert.match(found, /warn "checks" in \.phaseproof\/config\.json is not a list/);
   assert.match(found, /warn "docPaths" .* defaults are used/);
   assert.match(found, /FAIL no checks configured/);
-  assert.match(found, /warn run this from Claude Code/);
   const r = cli(root, 'doctor');
   assert.equal(r.code, 1);
   assert.match(r.err, /problems? to fix/);
@@ -111,4 +110,52 @@ test('doctor outside git, untracked, and with a lost base', (t) => {
   const a = join(root, '.phaseproof/approvals/phase-01.json');
   put(root, '.phaseproof/approvals/phase-01.json', JSON.stringify({ ...JSON.parse(readFileSync(a, 'utf8')), base: 'b'.repeat(40) }));
   assert.match(levels(doctor(root, { node: '22.1.0' })), /approval's base commit bbbbbbbbbbbb is gone/);
+});
+
+test('unpadded review files and stray phase files stay out of the report', (t) => {
+  const root = project(t);
+  post(JSON.stringify({ cwd: root, tool_name: 'Write', tool_input: { file_path: put(root, '.phaseproof/reviews/phase-1-code.md', FAIL) } }), root);
+  post(JSON.stringify({ cwd: root, tool_name: 'Write', tool_input: { file_path: put(root, '.phaseproof/reviews/phase-001-code.md', FAIL) } }), root);
+  assert.equal(readHistory(root).length, 0);
+  put(root, 'phases/phase-02.md', 'notes');
+  mkdirSync(join(root, 'phases/phase-3-odd'));
+  const r = report(root);
+  assert.doesNotMatch(r, /^(1|001|02|3) /m);
+});
+
+test('a cut-off last history line does not swallow the next entry', (t) => {
+  const root = project(t);
+  save(root, 'docs', PASS);
+  appendFileSync(historyFile(root), '{"phase":"01","kind":"co');
+  save(root, 'code', FAIL);
+  assert.deepEqual(readHistory(root).map((e) => e.kind), ['docs', 'code']);
+});
+
+test('doctor accepts a Done when list, checks its own hooks file, and names a broken config', (t) => {
+  const root = project(t, '# Phase 01\n\n**Goal:** g\n\n**Done when:**\n1. a\n2. b\n');
+  let found = levels(doctor(root, { node: '22.1.0' }));
+  assert.doesNotMatch(found, /no \*\*Done when:\*\* line/);
+  assert.match(found, /ok plugin hooks file found/);
+  put(root, '.phaseproof/config.json', '{"checks": ["npm test"],}');
+  found = levels(doctor(root, { node: '22.1.0' }));
+  assert.match(found, /FAIL \.phaseproof\/config\.json is not valid JSON/);
+  const r = cli(project(t), 'doctor');
+  assert.equal(r.code, 0, r.err);
+});
+
+test('doctor survives a phases file and reports a block and a changed config', (t) => {
+  const plainPhases = tempProject(t);
+  git(plainPhases, 'init', '-q');
+  cli(plainPhases, 'init', '--check', 'node -e "0"');
+  put(plainPhases, 'phases', 'not a folder');
+  assert.match(levels(doctor(plainPhases, { node: '22.1.0' })), /warn no phases\/ folder yet/);
+  const root = project(t);
+  put(root, '.phaseproof/reviews/phase-01-docs.md', PASS);
+  cli(root, 'approve');
+  put(root, '.phaseproof/reviews/phase-01-code.md', FAIL);
+  cli(root, 'block');
+  put(root, '.phaseproof/config.json', '{"checks": ["true"]}');
+  const found = levels(doctor(root, { node: '22.1.0' }));
+  assert.match(found, /warn phase 01 is blocked/);
+  assert.match(found, /warn the checks or doc paths changed since phase 01 was approved/);
 });

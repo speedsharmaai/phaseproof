@@ -25,7 +25,7 @@ export function readHistory(root) {
 export function recordHistory(root, file) {
   const rel = toProjectPath(root, String(file ?? ''));
   const m = rel ? REVIEW.exec(rel) : null;
-  if (!m || !isActive(root)) return false;
+  if (!m || !isActive(root) || String(Number(m[1])).padStart(2, '0') !== m[1]) return false;
   const [, phase, kind] = m;
   const text = readText(ppPath(root, 'reviews', `phase-${phase}-${kind}.md`));
   if (!text || !text.trim()) return false;
@@ -34,6 +34,7 @@ export function recordHistory(root, file) {
   const v = parseVerdict(text);
   const entry = { phase, kind, verdict: v.pass ? 'PASS' : 'FAIL', blockers: v.blockers.length, at: new Date().toISOString(), review };
   mkdirSync(dirname(historyFile(root)), { recursive: true });
-  appendFileSync(historyFile(root), `${JSON.stringify(entry)}\n`);
+  const existing = readText(historyFile(root)) ?? '';
+  appendFileSync(historyFile(root), `${existing && !existing.endsWith('\n') ? '\n' : ''}${JSON.stringify(entry)}\n`);
   return true;
 }
