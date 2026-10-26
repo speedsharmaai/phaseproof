@@ -31,14 +31,20 @@ function lineCount(root, rel) {
 export function measure(root, base) {
   if (typeof base !== 'string' || !/^[0-9a-f]{7,64}$/.test(base)) return null;
   const { docPaths } = loadConfig(root);
-  const numstat = git(root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--relative', '--numstat', '-z', base, '--', '.']);
+  const numstat = git(root, ['diff', '--no-ext-diff', '--no-textconv', '-M', '--relative', '--numstat', '-z', base, '--', '.']);
   const others = git(root, ['ls-files', '--others', '--exclude-standard', '-z', '--', '.']);
   if (numstat.status !== 0 || others.status !== 0) return null;
   let lines = 0;
   const files = new Set();
-  for (const entry of numstat.stdout.split('\0').filter(Boolean)) {
-    const [added, deleted, ...rest] = entry.split('\t');
-    const path = rest.join('\t');
+  const parts = numstat.stdout.split('\0');
+  for (let i = 0; i < parts.length; i++) {
+    if (!parts[i]) continue;
+    const [added, deleted, ...rest] = parts[i].split('\t');
+    let path = rest.join('\t');
+    if (!path) {
+      path = parts[i + 2] ?? '';
+      i += 2;
+    }
     if (!path || !isCode(path, docPaths)) continue;
     files.add(path);
     lines += (Number(added) || 0) + (Number(deleted) || 0);

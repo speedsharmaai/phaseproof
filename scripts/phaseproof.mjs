@@ -173,7 +173,7 @@ const commands = {
     const locked = lockedTests(root, phase);
     if (locked.length) lines.push(`  locked tests ${listed(locked, 5)}`);
     const budget = scopeBudget(root, phase);
-    const approvalBase = readJson(approvalFile(root, phase), {})?.base ?? null;
+    const approvalBase = ((a) => a?.base ?? a?.head ?? null)(readJson(approvalFile(root, phase), {}));
     const used = budget && approvalBase ? measure(root, approvalBase) : null;
     if (budget && used) {
       const part = (n, max, unit) => (max === null ? `${n} ${unit}` : `${n}/${max} ${unit}`);
@@ -216,7 +216,7 @@ const commands = {
     const { checks, docPaths } = loadConfig(root);
     const runs = gateRuns(root, phase);
     notes.push(checks.length ? `The gate will run: ${checks.join(' ; ')}.` : runs.length ? 'No project checks are configured.' : 'No checks are configured, so the gate cannot pass until .phaseproof/config.json has some.');
-    if (runs.length) notes.push(`For this phase it also runs: ${runs.join(' ; ')}.`);
+    if (runs.length) notes.push(`For this phase it also runs: ${runs.map((c, i) => `(${i + 1}) ${c}`).join(' ')}.`);
     const budget = scopeBudget(root, phase);
     const count = (n, unit) => `${n} ${unit}${n === 1 ? '' : 's'}`;
     if (budget) notes.push(`Budget: ${[budget.lines !== null ? count(budget.lines, 'line') : null, budget.files !== null ? count(budget.files, 'file') : null].filter(Boolean).join(', ')} of code.`);
