@@ -297,22 +297,12 @@ test('locked paths match without regard to case where the file system folds case
   assert.equal(samePath('Tests/OTP.test.js', 'tests/otp.test.js', false), false);
 });
 
-test('a locked test added while re-planning an approved phase can be written; approved ones cannot', (t) => {
-  const root = project(t, LOCKED);
-  put(root, 'tests/otp.test.js', 'test("otp", () => {});\n');
-  cli(root, 'approve');
-  put(root, 'phases/phase-01-otp/scope.md', `${LOCKED}\n**Locked tests:** tests/resend.test.js\n`);
-  assert.equal(write(root, 'tests/resend.test.js').allow, true);
-  assert.match(write(root, 'tests/otp.test.js').reason, /locked test of phase 01/);
-  assert.match(write(root, 'src/app.js').reason, /scope changed after it was approved/);
-});
-
 test('approve shows the checks it binds, and odd doc paths', (t) => {
   const root = project(t);
   writeJson(join(root, '.phaseproof/config.json'), { checks: ['npm test', 'npm run lint'], docPaths: ['docs/', ''] });
   const r = cli(root, 'approve');
   assert.match(r.out, /The gate will run: npm test ; npm run lint\./);
-  assert.match(r.out, /Always writable as docs: docs\/, \./);
+  assert.match(r.out, /Always writable as docs: docs\/\./);
   assert.equal(write(root, 'src/app.js').allow, true);
   writeJson(join(root, '.phaseproof/config.json'), { checks: [], docPaths: ['', './', '/'] });
   rmSync(approvalFile(root, '01'));
@@ -333,40 +323,6 @@ test('a fingerprint survives being written and read back', (t) => {
   assert.deepEqual(driftSince(back, codeFingerprint(root, head)), { changed: [], fresh: [] });
   put(root, '__proto__', 'y');
   assert.deepEqual(driftSince(back, codeFingerprint(root, head)).changed, ['__proto__']);
-});
-
-test('re-planning cannot open a test that existed at approval, nor any test after the gate', (t) => {
-  const root = project(t, LOCKED);
-  put(root, 'tests/otp.test.js', 'test("otp", () => {});\n');
-  put(root, 'tests/old.test.js', 'test("old", () => { expect(1).toBe(1); });\n');
-  git(root, 'add', '-A');
-  git(root, 'commit', '-qm', 'tests');
-  cli(root, 'approve', '--new-base');
-  put(root, 'phases/phase-01-otp/scope.md', `${LOCKED}\n**Locked tests:** tests/old.test.js, tests/fresh.test.js\n`);
-  assert.match(write(root, 'tests/old.test.js').reason, /scope changed after it was approved/);
-  assert.equal(write(root, 'tests/fresh.test.js').allow, true);
-  put(root, 'phases/phase-01-otp/scope.md', LOCKED);
-  put(root, REVIEW, 'VERDICT: FAIL\n- [blocker] src/app.js:1 wrong\n');
-  cli(root, 'block');
-  put(root, 'phases/phase-01-otp/scope.md', `${LOCKED}\n**Locked tests:** tests/old.test.js, tests/fresh.test.js\n`);
-  assert.equal(write(root, 'tests/old.test.js').allow, false);
-  assert.equal(write(root, 'tests/fresh.test.js').allow, true);
-  put(root, 'phases/phase-01-otp/scope.md', LOCKED);
-  cli(root, 'approve');
-  saveReview(root);
-  assert.equal(cli(root, 'gate').code, 0);
-  put(root, 'phases/phase-01-otp/scope.md', `${LOCKED}\n**Locked tests:** tests/fresh.test.js\n`);
-  assert.match(write(root, 'tests/fresh.test.js').reason, /scope changed|already passed its gate/);
-});
-
-test('re-planning needs a base commit to tell new tests from old ones', (t) => {
-  const root = project(t, LOCKED);
-  put(root, 'tests/otp.test.js', 'test("otp", () => {});\n');
-  cli(root, 'approve');
-  const a = readJson(approvalFile(root, '01'));
-  writeJson(approvalFile(root, '01'), { ...a, base: 'e'.repeat(40) });
-  put(root, 'phases/phase-01-otp/scope.md', `${LOCKED}\n**Locked tests:** tests/fresh.test.js\n`);
-  assert.equal(write(root, 'tests/fresh.test.js').allow, false);
 });
 
 test('a malformed config cannot open code or crash approve', (t) => {
@@ -396,4 +352,57 @@ test('a repository with no commits at approval says the review was not compared'
 
 test('locked paths written in another Unicode form still match', () => {
   assert.equal(samePath('tests/café.test.js', 'tests/café.test.js', false), true);
+});
+
+test('before approval only new tests can be written as locked tests, in any spelling', (t) => {
+  const root = project(t, `${SCOPE}\n**Locked tests:** tests/old.test.js, tests/new.test.js\n`);
+  put(root, 'tests/old.test.js', 'test("old", () => { expect(1).toBe(1); });\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'old test');
+  assert.match(write(root, 'tests/old.test.js').reason, /already committed/);
+  if (process.platform !== 'linux') assert.equal(write(root, 'Tests/old.test.js').allow, false);
+  assert.equal(write(root, 'tests/new.test.js').allow, true);
+  put(root, 'tests/new.test.js', 'test("new", () => {});\n');
+  assert.equal(write(root, 'tests/new.test.js').allow, true);
+});
+
+test('in a subfolder project or a repo without commits, new locked tests can be written', (t) => {
+  const sub = project(t, `${SCOPE}\n**Locked tests:** tests/new.test.js, src/app.test.js\n`, 'apps/web');
+  put(sub, 'src/app.test.js', 'x');
+  git(join(sub, '..', '..'), 'add', '-A');
+  git(join(sub, '..', '..'), 'commit', '-qm', 'app test');
+  assert.equal(write(sub, 'tests/new.test.js').allow, true);
+  assert.match(write(sub, 'src/app.test.js').reason, /already committed/);
+  const fresh = tempProject(t);
+  git(fresh, 'init', '-q');
+  cli(fresh, 'init');
+  put(fresh, 'phases/phase-01-otp/scope.md', `${SCOPE}\n**Locked tests:** tests/new.test.js\n`);
+  assert.equal(write(fresh, 'tests/new.test.js').allow, true);
+});
+
+test('once approved, a locked test stays closed even after it is taken off the list or the doc paths widen', (t) => {
+  const root = project(t, `${SCOPE}\n**Locked tests:** docs/spec.test.js, tests/otp.test.js\n`);
+  put(root, 'docs/spec.test.js', 'test("spec", () => {});\n');
+  put(root, 'tests/otp.test.js', 'test("otp", () => {});\n');
+  assert.equal(cli(root, 'approve').code, 0);
+  put(root, 'phases/phase-01-otp/scope.md', SCOPE);
+  assert.match(write(root, 'docs/spec.test.js').reason, /locked test of phase 01/);
+  writeJson(join(root, '.phaseproof/config.json'), { checks: ['node -e "process.exit(0)"'], docPaths: ['docs/', 'phases/', 'design/', 'tests/', 'src/'] });
+  assert.match(write(root, 'tests/otp.test.js').reason, /locked test of phase 01/);
+  put(root, 'phases/phase-01-otp/scope.md', `${SCOPE}\n**Locked tests:** docs/spec.test.js, tests/otp.test.js\n`);
+  assert.match(write(root, 'src/app.js').reason, /changed after phase 01 was approved/);
+  assert.match(write(root, 'tests/fresh.test.js').reason, /changed after phase 01 was approved/);
+  assert.equal(write(root, 'docs/notes.txt').allow, true);
+});
+
+test('a tracked file that only starts to differ after the review refuses the gate', (t) => {
+  const root = project(t);
+  put(root, 'src/other.js', 'export const o = 1;\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'other');
+  cli(root, 'approve', '--new-base');
+  put(root, 'src/app.js', 'export const app = 2;\n');
+  saveReview(root);
+  put(root, 'src/other.js', 'export const o = 2;\n');
+  assert.match(cli(root, 'gate').err, /code changed after the code review was saved: src\/other\.js\./);
 });

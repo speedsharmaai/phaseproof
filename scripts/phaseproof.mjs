@@ -36,6 +36,7 @@ import {
   writeJson,
 } from './lib/project.mjs';
 import { parseVerdict } from './lib/verdict.mjs';
+import { usableDocPath } from './lib/decide.mjs';
 import { isTestFile, testTampering } from './lib/tests-guard.mjs';
 
 const USAGE = `usage: phaseproof <command>
@@ -199,7 +200,7 @@ const commands = {
     if (locked.length) notes.push(`Locked tests, closed to edits until the gate: ${listed(locked)}.`);
     const { checks, docPaths } = loadConfig(root);
     notes.push(checks.length ? `The gate will run: ${checks.join(' ; ')}.` : 'No checks are configured, so the gate cannot pass until .phaseproof/config.json has some.');
-    if (JSON.stringify(docPaths) !== JSON.stringify(DEFAULT_CONFIG.docPaths)) notes.push(`Always writable as docs: ${docPaths.join(', ') || 'nothing'}.`);
+    if (JSON.stringify(docPaths) !== JSON.stringify(DEFAULT_CONFIG.docPaths)) notes.push(`Always writable as docs: ${docPaths.filter(usableDocPath).join(', ') || 'Markdown files only'}.`);
     out(`phase ${phase} approved. Code is open for this phase.${unblocked ? ' Block cleared.' : ''}${notes.length ? ` ${notes.join(' ')}` : ''}`);
   },
 

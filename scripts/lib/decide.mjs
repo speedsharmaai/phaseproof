@@ -1,10 +1,12 @@
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   approvalFile,
   blockFile,
   changedLocked,
   configChanged,
+  DEFAULT_CONFIG,
   gateFile,
   isActive,
   linkedPath,
@@ -28,7 +30,7 @@ const WRITABLE_STATE = ['.phaseproof/reviews/', '.phaseproof/config.json'];
 const allow = { allow: true };
 const deny = (reason) => ({ allow: false, reason: `phaseproof: ${reason}` });
 
-const usableDocPath = (p) => typeof p === 'string' && p.replace(/^[./\\\s]+$/, '') !== '';
+export const usableDocPath = (p) => typeof p === 'string' && p.replace(/^[./\\\s]+$/, '') !== '';
 
 export const isDoc = (rel, docPaths) =>
   rel.toLowerCase().endsWith('.md') || docPaths.filter(usableDocPath).some((p) => rel === p.replace(/\/$/, '') || rel.startsWith(p));
@@ -57,7 +59,9 @@ export function decide({ root, toolName, toolInput = {} }) {
   const locked = lockedReason(root, rel);
   if (locked !== undefined) return locked ? deny(locked) : allow;
 
-  if (isDoc(rel, loadConfig(root).docPaths)) return allow;
+  const phase = loadState(root)?.phase;
+  const docPaths = phase && configChanged(root, phase) ? DEFAULT_CONFIG.docPaths : loadConfig(root).docPaths;
+  if (isDoc(rel, docPaths)) return allow;
 
   const reason = closedReason(root);
   return reason ? deny(reason) : allow;
@@ -67,22 +71,27 @@ const listsPath = (root, paths, rel) => paths.some((p) => samePath(toProjectPath
 
 function lockedReason(root, rel) {
   const phase = loadState(root)?.phase;
-  if (!phase || !listsPath(root, lockedTests(root, phase), rel)) return undefined;
+  if (!phase) return undefined;
   const approval = readJson(approvalFile(root, phase), null);
-  if (approval && listsPath(root, Object.keys(approval.locked ?? {}), rel)) {
-    return `${rel} is a locked test of phase ${phase}: it was approved with the scope and stays as it is while the phase builds. If it is wrong, stop and tell the owner; they edit it themselves, or take it off **Locked tests:** and re-approve.`;
+  if (approval) {
+    const locked = approval.locked && typeof approval.locked === 'object' ? Object.keys(approval.locked) : [];
+    if (!listsPath(root, locked, rel)) return undefined;
+    return `${rel} is a locked test of phase ${phase}: it was approved with the scope and stays as it is. If it is wrong, stop and tell the owner; they edit it themselves and approve again.`;
   }
-  if (!isTestFile(rel) || linkedPath(root, rel)) return undefined;
-  if (!approval) return null;
-  const replanning = scopeChanged(root, phase) && !existsSync(gateFile(root, phase)) && !inCommit(root, approval.base ?? approval.head, rel);
-  return replanning ? null : undefined;
+  if (!listsPath(root, lockedTests(root, phase), rel) || !isTestFile(rel) || linkedPath(root, rel)) return undefined;
+  if (committed(root, rel)) {
+    return `${rel} is listed under **Locked tests:** but is already committed. Locked tests are new acceptance tests for this phase; existing tests stay closed until phase ${phase} is approved.`;
+  }
+  return null;
 }
 
-const catFile = (root, object) => spawnSync('git', ['--no-optional-locks', 'cat-file', '-e', object], { cwd: root, timeout: 5000 }).status;
+const git = (root, args) => spawnSync('git', ['--no-optional-locks', '-c', 'core.quotePath=false', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, timeout: 10000 });
 
-function inCommit(root, rev, rel) {
-  if (typeof rev !== 'string' || !/^[0-9a-f]{7,64}$/.test(rev) || catFile(root, `${rev}^{commit}`) !== 0) return true;
-  return catFile(root, `${rev}:./${rel}`) !== 128;
+function committed(root, rel) {
+  const tree = git(root, ['ls-tree', '-r', '--name-only', '-z', 'HEAD', '--', '.']);
+  if (tree.status === 0) return tree.stdout.split('\0').some((p) => p && samePath(p, rel));
+  if (git(root, ['rev-parse', '--is-inside-work-tree']).stdout?.trim() !== 'true') return existsSync(join(root, rel));
+  return git(root, ['rev-parse', '-q', '--verify', 'HEAD']).status === 0;
 }
 
 export function closedReason(root) {
