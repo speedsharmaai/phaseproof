@@ -104,32 +104,48 @@ export function phaseDir(root, phase) {
   return phaseDirs(root, phase)[0] ?? null;
 }
 
-function withoutFences(md) {
+function visibleText(md) {
   const kept = [];
   let fence = null;
-  for (const line of md.split('\n')) {
-    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+  let comment = false;
+  for (const raw of md.replace(/^\uFEFF/, '').replace(/\r/g, '').split('\n')) {
     if (fence) {
-      if (m && m[1][0] === fence[0] && m[1].length >= fence.length && !m[2].trim()) fence = null;
+      const close = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(raw);
+      if (close && close[1][0] === fence[0] && close[1].length >= fence.length && !close[2].trim()) fence = null;
+      kept.push('');
       continue;
     }
-    if (m && !(m[1][0] === '`' && m[2].includes('`'))) {
-      fence = m[1];
+    let line = raw;
+    let out = '';
+    while (line) {
+      if (comment) {
+        const end = line.indexOf('-->');
+        if (end < 0) {
+          line = '';
+          break;
+        }
+        comment = false;
+        line = line.slice(end + 3);
+        continue;
+      }
+      const start = line.indexOf('<!--');
+      if (start < 0) {
+        out += line;
+        break;
+      }
+      out += line.slice(0, start);
+      line = line.slice(start + 4);
+      comment = true;
+    }
+    const open = !comment && out === raw ? /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(out) : null;
+    if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
+      fence = open[1];
+      kept.push('');
       continue;
     }
-    kept.push(line);
+    kept.push(out);
   }
   return kept.join('\n');
-}
-
-function visibleText(md) {
-  let text = withoutFences(md.replace(/\r/g, ''));
-  let before;
-  do {
-    before = text;
-    text = text.replace(/<!--[\s\S]*?(-->|$)/g, '');
-  } while (text !== before);
-  return text;
 }
 
 const BULLET = /^\s*(?:[-*+]|\d+[.)])\s+/;
