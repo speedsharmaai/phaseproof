@@ -140,6 +140,24 @@ export function scopeList(text, name) {
   return out.map(cleanPath).filter((v) => v && v.toLowerCase() !== 'none');
 }
 
+export function scopeCommands(text, name) {
+  const out = [];
+  const lines = visibleText(text ?? '').split('\n');
+  const head = new RegExp(`^\\*\\*${name}:\\*\\*[ \\t]*(.*)$`);
+  for (let i = 0; i < lines.length; i++) {
+    const m = head.exec(lines[i]);
+    if (!m) continue;
+    if (m[1].trim()) {
+      out.push(m[1]);
+      continue;
+    }
+    let j = i + 1;
+    while (j < lines.length && !lines[j].trim()) j++;
+    for (; j < lines.length && BULLET.test(lines[j]); j++) out.push(lines[j].replace(BULLET, ''));
+  }
+  return out.map((c) => c.trim().replace(/^`([^`]*)`$/, '$1').trim()).filter((c) => c && c.toLowerCase() !== 'none');
+}
+
 export function scopeField(text, name) {
   const m = new RegExp(`^\\*\\*${name}:\\*\\*[ \\t]*(.*)$`, 'm').exec(visibleText(text ?? ''));
   return m ? m[1].trim() : null;
@@ -158,6 +176,21 @@ const SCOPE_FILES = ['scope.md', 'tasks.md', 'screens.md'];
 export function scopeText(root, phase) {
   const dir = phaseDir(root, phase);
   return (dir && readText(join(dir, 'scope.md'))) ?? '';
+}
+
+export const gateRuns = (root, phase) => scopeCommands(scopeText(root, phase), 'Gate runs');
+
+export function scopeBudget(root, phase) {
+  const value = scopeField(scopeText(root, phase), 'Budget') ?? '';
+  const amount = (unit) => {
+    const m = new RegExp(`(\\d[\\d,_]*(?:\\.\\d+)?)\\s*(k)?\\s*(?:${unit})\\b`, 'i').exec(value);
+    if (!m) return null;
+    const n = Number(m[1].replace(/[,_]/g, '')) * (m[2] ? 1000 : 1);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  };
+  const lines = amount('lines?|loc');
+  const files = amount('files?');
+  return lines !== null || files !== null ? { lines, files } : null;
 }
 
 export const lockedTests = (root, phase) => [...new Set(scopeList(scopeText(root, phase), 'Locked tests'))].sort();

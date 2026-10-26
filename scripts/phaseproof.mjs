@@ -1,7 +1,8 @@
 import { existsSync, lstatSync, mkdirSync, rmSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
+import { measure, overBudget } from './lib/budget.mjs';
 import { allPassed, runChecks } from './lib/checks.mjs';
-import { reviewDrift } from './lib/drift.mjs';
+import { codeFingerprint, reviewDrift } from './lib/drift.mjs';
 import { isMain } from './lib/main.mjs';
 import {
   approvalFile,
@@ -13,6 +14,7 @@ import {
   gateFile,
   gitHead,
   exactCase,
+  gateRuns,
   isActive,
   linkedPath,
   loadConfig,
@@ -28,6 +30,7 @@ import {
   reviewFile,
   runFile,
   scopeChanged,
+  scopeBudget,
   scopeHash,
   scopeList,
   scopeText,
@@ -123,10 +126,13 @@ function requireReview(root, phase, kind) {
 }
 
 function checkResults(root, phase) {
-  const { checks } = loadConfig(root);
-  if (!checks.length) refuse('no checks configured. Add commands to "checks" in .phaseproof/config.json');
-  const results = runChecks(root, checks);
-  writeJson(runFile(root, phase), { phase, ranAt: new Date().toISOString(), head: gitHead(root), results });
+  const commands = [...loadConfig(root).checks, ...gateRuns(root, phase)];
+  if (!commands.length) refuse('no checks configured. Add commands to "checks" in .phaseproof/config.json, or to **Gate runs:** in the phase scope');
+  const results = runChecks(root, commands);
+  const approval = readJson(approvalFile(root, phase), null);
+  const base = approval?.base ?? approval?.head ?? null;
+  const fingerprint = base ? codeFingerprint(root, base) : null;
+  writeJson(runFile(root, phase), { phase, ranAt: new Date().toISOString(), head: gitHead(root), results, ...(fingerprint ? { base, fingerprint } : {}) });
   return results;
 }
 
@@ -166,6 +172,13 @@ const commands = {
     ];
     const locked = lockedTests(root, phase);
     if (locked.length) lines.push(`  locked tests ${listed(locked, 5)}`);
+    const budget = scopeBudget(root, phase);
+    const approvalBase = ((a) => a?.base ?? a?.head ?? null)(readJson(approvalFile(root, phase), {}));
+    const used = budget && approvalBase ? measure(root, approvalBase) : null;
+    if (budget && used) {
+      const part = (n, max, unit) => (max === null ? `${n} ${unit}` : `${n}/${max} ${unit}`);
+      lines.push(`  budget       ${part(used.lines, budget.lines, 'lines')}, ${part(used.files, budget.files, 'files')}${overBudget(budget, used) ? ', OVER' : ''}`);
+    }
     if (block) lines.push(`  BLOCKED      ${block.reason}, waiting on the owner`);
     out(lines.join('\n'));
   },
@@ -201,7 +214,12 @@ const commands = {
     const dropped = Object.keys(previous?.locked && typeof previous.locked === 'object' ? previous.locked : {}).filter((p) => !locked.includes(p));
     if (dropped.length) notes.push(`No longer locked: ${listed(dropped)}.`);
     const { checks, docPaths } = loadConfig(root);
-    notes.push(checks.length ? `The gate will run: ${checks.join(' ; ')}.` : 'No checks are configured, so the gate cannot pass until .phaseproof/config.json has some.');
+    const runs = gateRuns(root, phase);
+    notes.push(checks.length ? `The gate will run: ${checks.join(' ; ')}.` : runs.length ? 'No project checks are configured.' : 'No checks are configured, so the gate cannot pass until .phaseproof/config.json has some.');
+    if (runs.length) notes.push(`For this phase it also runs: ${runs.map((c, i) => `(${i + 1}) ${c}`).join(' ')}.`);
+    const budget = scopeBudget(root, phase);
+    const count = (n, unit) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+    if (budget) notes.push(`Budget: ${[budget.lines !== null ? count(budget.lines, 'line') : null, budget.files !== null ? count(budget.files, 'file') : null].filter(Boolean).join(', ')} of code.`);
     if (JSON.stringify(docPaths) !== JSON.stringify(DEFAULT_CONFIG.docPaths)) notes.push(`Always writable as docs: ${docPaths.filter(usableDocPath).join(', ') || 'Markdown files only'}.`);
     out(`phase ${phase} approved. Code is open for this phase.${unblocked ? ' Block cleared.' : ''}${notes.length ? ` ${notes.join(' ')}` : ''}`);
   },
@@ -234,10 +252,12 @@ const commands = {
       refuse(`code changed after the code review was saved: ${listed(drift.changed)}. Review the current code again. If a check, formatter or build wrote these files, commit or gitignore that output before the review`);
     }
     const tests = testWarnings(root, phase, approval);
+    const over = overBudget(scopeBudget(root, phase), measure(root, approval.base ?? approval.head ?? null));
     const warnings = [
       ...(drift.warning ? [drift.warning] : []),
       ...drift.fresh.slice(0, 10).map((f) => `untracked file that appeared after the code review: ${f}`),
       ...(drift.fresh.length > 10 ? [`and ${drift.fresh.length - 10} more untracked files that appeared after the code review`] : []),
+      ...(over ? [`this phase changed ${over}. Split the rest into the next phase, or the owner raises the budget and approves again`] : []),
       ...tests,
     ];
     const results = checkResults(root, phase);

@@ -19,6 +19,7 @@ Check:
 - The phase names who it is for and what they can do afterwards that they could not do before.
 - The smallest version that delivers that is in scope; nice-to-haves are out of scope, not hidden in tasks.
 - Mistakes listed in `docs/learnings.md`, if it exists, are not being repeated.
+- Commands under **Gate runs:** can actually fail and prove "Done when"; a command that cannot fail (`true`, `|| true`, `echo`) is a blocker. If the scope locks tests, at least one Gate runs command runs them, or that is a major. A command that waits on a server has a timeout. A **Budget:**, if set, is plausible for the tasks.
 - Locked tests, if scope.md lists any under **Locked tests:**, test what "Done when" promises from the user's side, would fail on today's code, and do not pin implementation details the builder should be free to choose.
 
 Reply in exactly this shape:

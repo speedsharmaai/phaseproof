@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 - unreleased
+
+- `**Gate runs:**` in scope.md: phase commands the gate runs itself next to the project's checks, approved with the scope. Point one at the locked tests and a changed project test command cannot drop them (runner config still can; see the README)
+- `**Budget:**` in scope.md (`300 lines, 8 files`): the gate warns when the phase's code outgrows it, `status` shows how much is used, and the code reviewer treats unjustified overruns as a major
+- A Stop hook asks Claude to fix red checks, or say plainly that they are red, before it finishes a turn with a failed check run and no code changed since. It asks once per failed run, so it cannot re-block turn after turn
+- Re-reviews start from the previous review's blockers and the diff since that review, so a fix round costs less than the first review
+
 ## 0.5.0 - 2026-10-26
 
 - Locked tests: acceptance tests listed under `**Locked tests:**` in scope.md can be written while the phase is planned, are reviewed with the docs, and are closed to edits once the owner approves. Their contents are part of the approved scope, so changing or deleting them by any route closes code and the gate until the owner approves again, and the message names the file
