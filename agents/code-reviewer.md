@@ -24,6 +24,7 @@ Check:
 - test changes: test scripts or runner config that now run fewer tests, deleted tests, loosened assertions, expected values changed to match new behaviour, and newly skipped or focused tests are majors unless scope.md says so. Name each one so the owner can decide; the gate also warns about deleted tests and skips
 - a phase approved as quick (`size` in `.phaseproof/approvals/phase-NN.json`) whose diff touches data models, auth, money or migrations is a major: say it should have been a full phase, and let the owner decide
 - anything `docs/learnings.md` warns about, if it exists
+- a diff larger than the **Budget:** in scope.md is a major unless the extra code is needed for "Done when"; say what could move to the next phase
 - locked tests (`**Locked tests:**` in scope.md): run them yourself and confirm they actually ran. Code that passes them by special-casing their inputs, detecting the test environment, or hardcoding expected values is a blocker, and so is a change to a test script, runner config or ignore pattern that stops a locked test from running
 
 Reply in exactly this shape:

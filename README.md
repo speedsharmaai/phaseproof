@@ -85,6 +85,8 @@ When `.phaseproof/state.json` exists in a project, a `PreToolUse` hook:
 - closes code again when `scope.md`, `tasks.md` or `screens.md` change after approval; re-approving a full phase then needs a fresh docs review. Only the owner makes a phase quick, with `approve --quick`; nothing in scope.md can. Each phase number may have one folder
 - closes code when a phase is blocked after two failed code reviews, until the owner approves it again
 - keeps locked tests closed: before the phase's first approval, files listed under **Locked tests:** in scope.md may be written if they look like test files, are not committed yet, and have no symlink in their path; a committed test stays closed. Once approved, every locked test is closed to file tools, through any spelling or symlink, even inside `docs/` or `phases/` and even if it is later taken off the list. Paths are matched without regard to case on every system, so two tests that differ only in case are treated as one. Adding a locked test to an approved phase is the owner's job: they write it, list it, and approve again. Their contents are part of the approved scope, so a shell edit or deletion closes code and the gate until the owner approves again, and the message names the file. Line endings are ignored. Approval refuses a locked test that is missing, outside the project, absolute, behind a symlink, cased differently from the file on disk, or not a test
+- runs each command listed under **Gate runs:** in scope.md at every `check` and `gate`, next to the project's checks. They are part of the approved scope, so changing them closes code like any scope edit. Pointing one at the locked tests means the gate runs them itself, whatever the project's test config says
+- warns at the gate when the code changed since approval outgrows the phase's **Budget:** (`300 lines, 8 files`); docs and untracked files over 1 MB are not counted. `status` shows how much is used
 - closes code and refuses the gate when the checks or doc paths in `.phaseproof/config.json` change after approval; until the owner approves again, only the default doc paths count as docs, so widening them opens nothing. `approve` prints the commands it binds, and any non-default doc paths, so you see what you are signing. This binds the command text, not what it runs: an edited `npm test` script, or a runner config that excludes a file, changes what runs without changing the command. The code reviewer is told to run the locked tests itself and to flag such edits. Approvals from before 0.5 have no record of the config and are not checked
 - allows Markdown, `docs/`, `phases/` and `design/`, except for locked tests and while the config has changed (below)
 - blocks writes to `.phaseproof/gates`, `approvals`, `runs` and `blocks`, by file tools or by Bash, and blocks running `approve` from Bash
@@ -157,7 +159,7 @@ No server, no telemetry, nothing collected. See [PRIVACY.md](PRIVACY.md).
 
 ## Status
 
-v0.5.0. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
+v0.6.0. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
 
 ## Related projects
 
