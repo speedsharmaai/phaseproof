@@ -35,6 +35,12 @@ test('Gate runs keeps whole commands, inline or as a list', () => {
   assert.deepEqual(scopeCommands('````\n```\n**Gate runs:** rm -rf x\n```\n````\n**Gate runs:** npm test\n', 'Gate runs'), ['npm test']);
   assert.deepEqual(scopeCommands('~~~\n```\n~~~\n**Gate runs:** npm test\n', 'Gate runs'), ['npm test']);
   assert.deepEqual(scopeCommands('```\nnever closed\n**Gate runs:** rm -rf x\n', 'Gate runs'), []);
+  assert.deepEqual(scopeCommands('**Gate runs:**\n- npm test\n```\nexample output\n```\n- deploy to prod\n', 'Gate runs'), ['npm test']);
+  assert.deepEqual(scopeCommands('<!--\n```\n-->\n**Gate runs:** npm test\n\n```\ncode\n```\n', 'Gate runs'), ['npm test']);
+  assert.deepEqual(scopeCommands('```\n<!--\n```\n**Gate runs:** npm test\n', 'Gate runs'), ['npm test']);
+  assert.deepEqual(scopeCommands('\uFEFF```\n**Gate runs:** rm\n```\n**Gate runs:** npm test\n', 'Gate runs'), ['npm test']);
+  assert.deepEqual(scopeCommands('```js`x\n**Gate runs:** npm test\n', 'Gate runs'), ['npm test']);
+  assert.deepEqual(scopeCommands('a <!-- b --> c\n**Gate runs:** <!-- hidden --> npm test\n', 'Gate runs'), ['npm test']);
   assert.deepEqual(scopeCommands('**Gate runs:** `npm test`, `npm run lint`', 'Gate runs'), ['`npm test`, `npm run lint`']);
 });
 
