@@ -104,8 +104,26 @@ export function phaseDir(root, phase) {
   return phaseDirs(root, phase)[0] ?? null;
 }
 
+function withoutFences(md) {
+  const kept = [];
+  let fence = null;
+  for (const line of md.split('\n')) {
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      if (m && m[1][0] === fence[0] && m[1].length >= fence.length && !m[2].trim()) fence = null;
+      continue;
+    }
+    if (m && !(m[1][0] === '`' && m[2].includes('`'))) {
+      fence = m[1];
+      continue;
+    }
+    kept.push(line);
+  }
+  return kept.join('\n');
+}
+
 function visibleText(md) {
-  let text = md.replace(/\r/g, '').replace(/```[\s\S]*?(```|$)/g, '').replace(/~~~[\s\S]*?(~~~|$)/g, '');
+  let text = withoutFences(md.replace(/\r/g, ''));
   let before;
   do {
     before = text;

@@ -30,6 +30,11 @@ test('Gate runs keeps whole commands, inline or as a list', () => {
   assert.deepEqual(scopeCommands('**Gate runs:**\n\n- npm test -- a,b\n- `grep "ok (1)" out.txt`\n\nmore', 'Gate runs'), ['npm test -- a,b', 'grep "ok (1)" out.txt']);
   assert.deepEqual(scopeCommands('**Gate runs:** none\n<!--\n**Gate runs:** rm -rf /\n-->', 'Gate runs'), []);
   assert.deepEqual(scopeCommands('~~~\n**Gate runs:** rm -rf x\n~~~\n', 'Gate runs'), []);
+  assert.deepEqual(scopeCommands('Expect ~~~300 lines~~ of change.\n\n**Gate runs:** node --test a.test.js\n', 'Gate runs'), ['node --test a.test.js']);
+  assert.deepEqual(scopeCommands('Use ```js``` inline.\n**Gate runs:** npm test\n', 'Gate runs'), ['npm test']);
+  assert.deepEqual(scopeCommands('````\n```\n**Gate runs:** rm -rf x\n```\n````\n**Gate runs:** npm test\n', 'Gate runs'), ['npm test']);
+  assert.deepEqual(scopeCommands('~~~\n```\n~~~\n**Gate runs:** npm test\n', 'Gate runs'), ['npm test']);
+  assert.deepEqual(scopeCommands('```\nnever closed\n**Gate runs:** rm -rf x\n', 'Gate runs'), []);
   assert.deepEqual(scopeCommands('**Gate runs:** `npm test`, `npm run lint`', 'Gate runs'), ['`npm test`, `npm run lint`']);
 });
 
