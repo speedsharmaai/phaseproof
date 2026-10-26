@@ -1,7 +1,9 @@
 import { existsSync } from 'node:fs';
 import { codeFingerprint, driftSince, isFingerprint } from './lib/drift.mjs';
 import { isMain } from './lib/main.mjs';
-import { approvalFile, blockFile, gateFile, isActive, loadState, readJson, runFile } from './lib/project.mjs';
+import { approvalFile, blockFile, gateFile, isActive, loadState, ppPath, readJson, runFile, writeJson } from './lib/project.mjs';
+
+const nudgeFile = (root, phase) => ppPath(root, 'runs', `phase-${phase}-stop.json`);
 
 export function nudge(root, input) {
   if (input.stop_hook_active === true) return null;
@@ -17,6 +19,12 @@ export function nudge(root, input) {
   if (!now) return null;
   const { changed, fresh } = driftSince(run.fingerprint, now);
   if (changed.length || fresh.length) return null;
+  if (readJson(nudgeFile(root, phase), null)?.ranAt === run.ranAt) return null;
+  try {
+    writeJson(nudgeFile(root, phase), { phase, ranAt: run.ranAt, nudgedAt: new Date().toISOString() });
+  } catch {
+    return null;
+  }
   return `phaseproof: the last check run for phase ${phase} failed (${failing.slice(0, 3).join(', ')}) and no code has changed since. Fix it before you finish, or tell the owner plainly that the checks are red and why you are stopping.`;
 }
 
