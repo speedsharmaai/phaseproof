@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { doctor } from '../scripts/lib/doctor.mjs';
 import { historyFile, readHistory, recordHistory } from '../scripts/lib/history.mjs';
@@ -112,15 +112,15 @@ test('doctor outside git, untracked, and with a lost base', (t) => {
   assert.match(levels(doctor(root, { node: '22.1.0' })), /approval's base commit bbbbbbbbbbbb is gone/);
 });
 
-test('unpadded review files and stray phase files stay out of the report', (t) => {
+test('reviews and folders with phase numbers phaseproof would not use stay out of the report', (t) => {
   const root = project(t);
   post(JSON.stringify({ cwd: root, tool_name: 'Write', tool_input: { file_path: put(root, '.phaseproof/reviews/phase-1-code.md', FAIL) } }), root);
   post(JSON.stringify({ cwd: root, tool_name: 'Write', tool_input: { file_path: put(root, '.phaseproof/reviews/phase-001-code.md', FAIL) } }), root);
-  assert.equal(readHistory(root).length, 0);
+  assert.deepEqual(readHistory(root).map((e) => e.phase), ['001']);
   put(root, 'phases/phase-02.md', 'notes');
   mkdirSync(join(root, 'phases/phase-3-odd'));
   const r = report(root);
-  assert.doesNotMatch(r, /^(1|001|02|3) /m);
+  assert.doesNotMatch(r, /^(1|02|3) {2,}/m);
 });
 
 test('a cut-off last history line does not swallow the next entry', (t) => {
@@ -138,7 +138,7 @@ test('doctor accepts a Done when list, checks its own hooks file, and names a br
   assert.match(found, /ok plugin hooks file found/);
   put(root, '.phaseproof/config.json', '{"checks": ["npm test"],}');
   found = levels(doctor(root, { node: '22.1.0' }));
-  assert.match(found, /FAIL \.phaseproof\/config\.json is not valid JSON/);
+  assert.match(found, /FAIL \.phaseproof\/config\.json cannot be read as JSON/);
   const r = cli(project(t), 'doctor');
   assert.equal(r.code, 0, r.err);
 });
@@ -158,4 +158,25 @@ test('doctor survives a phases file and reports a block and a changed config', (
   const found = levels(doctor(root, { node: '22.1.0' }));
   assert.match(found, /warn phase 01 is blocked/);
   assert.match(found, /warn the checks or doc paths changed since phase 01 was approved/);
+});
+
+test('three-digit phases are recorded and reported; a dangling link or file in phases/ drops nothing', (t) => {
+  const root = tempProject(t);
+  git(root, 'init', '-q');
+  cli(root, 'init', '--check', 'node -e "0"', '--phase', '100');
+  put(root, 'phases/phase-100-big/scope.md', SCOPE);
+  post(JSON.stringify({ cwd: root, tool_name: 'Write', tool_input: { file_path: put(root, '.phaseproof/reviews/phase-100-docs.md', PASS) } }), root);
+  assert.equal(readHistory(root).length, 1);
+  put(root, 'phases/phase-101', 'a file, not a folder');
+  put(root, 'phases/phase-103-c/scope.md', SCOPE);
+  if (process.platform !== 'win32') symlinkSync(join(root, 'nowhere'), join(root, 'phases/phase-102-gone'));
+  const r = report(root);
+  assert.match(r, /^100 {4}big/m);
+  assert.match(r, /^103 {4}c /m);
+  assert.doesNotMatch(r, /^101 /m);
+});
+
+test('doctor flags an empty Goal', (t) => {
+  const root = project(t, '# Phase 01\n\n**Goal:**\n\n**Done when:** d\n');
+  assert.match(levels(doctor(root, { node: '22.1.0' })), /warn \*\*Goal:\*\* in scope\.md of phase 01 is empty/);
 });
