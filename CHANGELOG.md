@@ -2,6 +2,8 @@
 
 ## 0.6.0 - unreleased
 
+- `**Gate runs:**` in scope.md: phase commands the gate runs itself next to the project's checks, approved with the scope. Point one at the locked tests and a changed test config cannot skip them
+- `**Budget:**` in scope.md (`300 lines, 8 files`): the gate warns when the phase's code outgrows it, `status` shows how much is used, and the code reviewer treats unjustified overruns as a major
 - A Stop hook asks Claude once to fix red checks, or say plainly that they are red, before it finishes a turn with a failed check run and no code changed since
 
 ## 0.5.0 - 2026-10-26
