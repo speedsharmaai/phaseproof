@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { closedReason } from './lib/decide.mjs';
 import { codeFingerprint, driftSince, isFingerprint } from './lib/drift.mjs';
 import { isMain } from './lib/main.mjs';
 import { approvalFile, blockFile, gateFile, isActive, loadState, ppPath, readJson, runFile, writeJson } from './lib/project.mjs';
@@ -11,7 +12,7 @@ export function nudge(root, input) {
   if (!isActive(root)) return null;
   const phase = loadState(root)?.phase;
   if (typeof phase !== 'string' || !/^\d{1,3}$/.test(phase)) return null;
-  if (!existsSync(approvalFile(root, phase)) || existsSync(blockFile(root, phase)) || existsSync(gateFile(root, phase))) return null;
+  if (!existsSync(approvalFile(root, phase)) || existsSync(blockFile(root, phase)) || existsSync(gateFile(root, phase)) || closedReason(root)) return null;
   const run = readJson(runFile(root, phase), null);
   const failing = Array.isArray(run?.results) ? run.results.filter((r) => r?.code !== 0).map((r) => String(r?.cmd)) : [];
   if (!failing.length || !isFingerprint(run.fingerprint)) return null;

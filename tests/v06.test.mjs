@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { decide } from '../scripts/lib/decide.mjs';
 import { measure, overBudget } from '../scripts/lib/budget.mjs';
@@ -28,12 +29,14 @@ test('Gate runs keeps whole commands, inline or as a list', () => {
   assert.deepEqual(scopeCommands('**Gate runs:** `node --test a.test.js`', 'Gate runs'), ['node --test a.test.js']);
   assert.deepEqual(scopeCommands('**Gate runs:**\n\n- npm test -- a,b\n- `grep "ok (1)" out.txt`\n\nmore', 'Gate runs'), ['npm test -- a,b', 'grep "ok (1)" out.txt']);
   assert.deepEqual(scopeCommands('**Gate runs:** none\n<!--\n**Gate runs:** rm -rf /\n-->', 'Gate runs'), []);
+  assert.deepEqual(scopeCommands('~~~\n**Gate runs:** rm -rf x\n~~~\n', 'Gate runs'), []);
+  assert.deepEqual(scopeCommands('**Gate runs:** `npm test`, `npm run lint`', 'Gate runs'), ['`npm test`, `npm run lint`']);
 });
 
 test('the gate runs the phase commands too, and refuses when one fails', (t) => {
   const root = project(t, `${SCOPE}\n**Gate runs:** node -e "process.exit(require('fs').existsSync('done.txt') ? 0 : 1)"\n`);
   const a = cli(root, 'approve');
-  assert.match(a.out, /For this phase it also runs: node -e/);
+  assert.match(a.out, /For this phase it also runs: \(1\) node -e/);
   review(root);
   const r = cli(root, 'gate');
   assert.equal(r.code, 1);
@@ -66,6 +69,10 @@ test('Budget is read from scope.md in any order, and compared per limit', (t) =>
   assert.deepEqual(scopeBudget(root, '01'), { lines: 40, files: null });
   put(root, 'phases/phase-01-x/scope.md', `${SCOPE}\n**Budget:** none\n`);
   assert.equal(scopeBudget(root, '01'), null);
+  for (const [line, want] of [['1,200 lines', 1200], ['2k LOC', 2000], ['~400 loc, 3 files', 400], ['1.5k lines', 1500]]) {
+    put(root, 'phases/phase-01-x/scope.md', `${SCOPE}\n**Budget:** ${line}\n`);
+    assert.equal(scopeBudget(root, '01').lines, want, line);
+  }
   assert.equal(overBudget({ lines: 10, files: null }, { lines: 11, files: 99 }), '11 lines (budget 10)');
   assert.equal(overBudget({ lines: 10, files: 2 }, { lines: 10, files: 2 }), null);
   assert.equal(overBudget(null, { lines: 1, files: 1 }), null);
@@ -97,4 +104,25 @@ test('no budget, no git or a bad base measures nothing', (t) => {
   assert.equal(measure(tempProject(t), 'abc1234'), null);
   cli(root, 'approve');
   assert.doesNotMatch(cli(root, 'status').out, /budget/);
+});
+
+test('a file moved with git counts once, with only its edited lines', (t) => {
+  const root = project(t, SCOPE);
+  put(root, 'src/big.js', Array.from({ length: 500 }, (_, i) => `export const v${i} = ${i};`).join('\n') + '\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'big');
+  const base = git(root, 'rev-parse', 'HEAD').stdout.trim();
+  mkdirSync(join(root, 'lib'));
+  assert.equal(git(root, 'mv', 'src/big.js', 'lib/big.js').status, 0);
+  assert.deepEqual(measure(root, base), { lines: 0, files: 1 });
+  git(root, 'commit', '-qm', 'move');
+  assert.deepEqual(measure(root, base), { lines: 0, files: 1 });
+});
+
+test('big or binary untracked files count as files with no lines', (t) => {
+  const root = project(t, SCOPE);
+  const base = git(root, 'rev-parse', 'HEAD').stdout.trim();
+  put(root, 'src/huge.js', 'x\n'.repeat(600 * 1024));
+  put(root, 'src/blob.bin', 'a\0b\nc\n');
+  assert.deepEqual(measure(root, base), { lines: 0, files: 2 });
 });

@@ -65,3 +65,26 @@ test('the Stop hook stays silent outside phaseproof, on junk, and on damaged run
   writeFileSync(join(root, '.phaseproof/runs/phase-01-checks.json'), '{"results": [{"code": 1, "cmd": "t"}], "fingerprint": {"tracked": 1}}');
   assert.equal(stop(root), '');
 });
+
+test('no nudge before approval, after the gate, while code is closed, or once a new file appeared', (t) => {
+  const root = project(t);
+  cli(root, 'check');
+  put(root, 'src/extra.js', 'x\n');
+  assert.equal(stop(root), '');
+  const fresh = project(t);
+  cli(fresh, 'check');
+  put(fresh, 'phases/phase-01-x/scope.md', '# Phase 01\n\n**Goal:** changed\n');
+  assert.equal(stop(fresh), '');
+  const gated = project(t);
+  put(gated, 'src/app.js', 'export const app = 2;\n');
+  put(gated, '.phaseproof/reviews/phase-01-code.md', PASS);
+  assert.equal(cli(gated, 'gate').code, 0);
+  put(gated, 'src/app.js', 'export const app = 1;\n');
+  cli(gated, 'check');
+  assert.equal(stop(gated), '');
+  const unapproved = tempProject(t);
+  git(unapproved, 'init', '-q');
+  cli(unapproved, 'init', '--check', 'node -e "process.exit(1)"');
+  cli(unapproved, 'check');
+  assert.equal(stop(unapproved), '');
+});

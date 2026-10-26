@@ -105,7 +105,7 @@ export function phaseDir(root, phase) {
 }
 
 function visibleText(md) {
-  let text = md.replace(/\r/g, '').replace(/```[\s\S]*?(```|$)/g, '');
+  let text = md.replace(/\r/g, '').replace(/```[\s\S]*?(```|$)/g, '').replace(/~~~[\s\S]*?(~~~|$)/g, '');
   let before;
   do {
     before = text;
@@ -155,7 +155,7 @@ export function scopeCommands(text, name) {
     while (j < lines.length && !lines[j].trim()) j++;
     for (; j < lines.length && BULLET.test(lines[j]); j++) out.push(lines[j].replace(BULLET, ''));
   }
-  return out.map((c) => c.trim().replace(/^`(.*)`$/, '$1').trim()).filter((c) => c && c.toLowerCase() !== 'none');
+  return out.map((c) => c.trim().replace(/^`([^`]*)`$/, '$1').trim()).filter((c) => c && c.toLowerCase() !== 'none');
 }
 
 export function scopeField(text, name) {
@@ -182,9 +182,15 @@ export const gateRuns = (root, phase) => scopeCommands(scopeText(root, phase), '
 
 export function scopeBudget(root, phase) {
   const value = scopeField(scopeText(root, phase), 'Budget') ?? '';
-  const lines = /(\d+)\s*lines?\b/i.exec(value);
-  const files = /(\d+)\s*files?\b/i.exec(value);
-  return lines || files ? { lines: lines ? Number(lines[1]) : null, files: files ? Number(files[1]) : null } : null;
+  const amount = (unit) => {
+    const m = new RegExp(`(\\d[\\d,_]*(?:\\.\\d+)?)\\s*(k)?\\s*(?:${unit})\\b`, 'i').exec(value);
+    if (!m) return null;
+    const n = Number(m[1].replace(/[,_]/g, '')) * (m[2] ? 1000 : 1);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  };
+  const lines = amount('lines?|loc');
+  const files = amount('files?');
+  return lines !== null || files !== null ? { lines, files } : null;
 }
 
 export const lockedTests = (root, phase) => [...new Set(scopeList(scopeText(root, phase), 'Locked tests'))].sort();
