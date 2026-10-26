@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { closedReason } from './lib/decide.mjs';
 import { isMain } from './lib/main.mjs';
-import { approvalFile, blockFile, gateFile, isActive, loadState, phaseDir, readJson, scopeField, scopeText } from './lib/project.mjs';
+import { approvalFile, blockFile, gateFile, isActive, loadState, lockedTests, phaseDir, readJson, scopeField, scopeText } from './lib/project.mjs';
 
 const MAX = 1500;
 
@@ -32,6 +32,8 @@ export function context(root) {
   const done = field(scope, 'Done when');
   if (goal) lines.push(`Goal: ${goal}`);
   if (done) lines.push(`Done when: ${done}`);
+  const locked = lockedTests(root, phase);
+  if (locked.length) lines.push(`Locked tests (make them pass, never edit them): ${locked.slice(0, 5).join(', ')}${locked.length > 5 ? ` and ${locked.length - 5} more` : ''}`);
   const closed = closedReason(root);
   lines.push(closed ? `Code is closed: ${closed}` : 'Code is open for this phase only. Stay inside its scope.md and tasks.md.');
   if (existsSync(join(root, 'docs', 'learnings.md'))) lines.push('Read docs/learnings.md before planning or reviewing; it lists mistakes earlier phases made.');

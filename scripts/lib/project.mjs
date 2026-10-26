@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
@@ -17,6 +17,12 @@ export function padPhase(id) {
 }
 
 export const ppPath = (root, ...parts) => join(root, DIR, ...parts);
+
+export function toProjectPath(root, file) {
+  const rel = relative(resolve(root), resolve(root, file));
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
+  return rel.split(sep).join('/');
+}
 export const isActive = (root) => Boolean(root) && existsSync(ppPath(root, 'state.json'));
 
 export function readJson(file, fallback) {
@@ -116,16 +122,39 @@ export const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 
 const SCOPE_FILES = ['scope.md', 'tasks.md', 'screens.md'];
 
+export function scopeText(root, phase) {
+  const dir = phaseDir(root, phase);
+  return (dir && readText(join(dir, 'scope.md'))) ?? '';
+}
+
+export const lockedTests = (root, phase) => [...new Set(scopeList(scopeText(root, phase), 'Locked tests'))].sort();
+
+function fileDigest(root, path) {
+  const rel = toProjectPath(root, path);
+  if (!rel) return 'outside';
+  try {
+    return sha256(readFileSync(join(root, rel)));
+  } catch {
+    return 'missing';
+  }
+}
+
 export function scopeHash(root, phase) {
   const dir = phaseDir(root, phase);
   if (!dir) return null;
   const parts = SCOPE_FILES.map((name) => `${name}\n${readText(join(dir, name)) ?? ''}`);
+  for (const path of lockedTests(root, phase)) parts.push(`locked ${path}\n${fileDigest(root, path)}`);
   return sha256(parts.join('\n---\n'));
 }
 
-export function scopeText(root, phase) {
-  const dir = phaseDir(root, phase);
-  return (dir && readText(join(dir, 'scope.md'))) ?? '';
+export function configHash(root) {
+  const { checks, docPaths } = loadConfig(root);
+  return sha256(JSON.stringify({ checks, docPaths }));
+}
+
+export function configChanged(root, phase) {
+  const approval = readJson(approvalFile(root, phase), null);
+  return Boolean(approval?.configHash) && approval.configHash !== configHash(root);
 }
 
 export function scopeChanged(root, phase) {

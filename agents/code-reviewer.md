@@ -24,11 +24,15 @@ Check:
 - test changes: deleted tests, loosened assertions, expected values changed to match new behaviour, and newly skipped or focused tests are majors unless scope.md says so. Name each one so the owner can decide; the gate also warns about deleted tests and skips
 - a phase approved as quick (`size` in `.phaseproof/approvals/phase-NN.json`) whose diff touches data models, auth, money or migrations is a major: say it should have been a full phase, and let the owner decide
 - anything `docs/learnings.md` warns about, if it exists
+- locked tests (`**Locked tests:**` in scope.md): run them. Code that passes them by special-casing their inputs, detecting the test environment, or hardcoding expected values is a blocker
 
 Reply in exactly this shape:
 
 ```
 VERDICT: PASS | FAIL
+
+## Done when
+- <each criterion from scope.md> - verified | not verified - the command, output or file:line that shows it
 
 ## Findings
 - [blocker] src/file.ts:42 - what breaks, with the input that breaks it
@@ -39,4 +43,4 @@ VERDICT: PASS | FAIL
 - commands you ran and their result
 ```
 
-Any blocker means FAIL. Report only what you can point to in the code; no style opinions dressed up as blockers.
+Any blocker means FAIL. A "Done when" criterion you could not verify is not a pass: say why, and make it a blocker if the running system shows it is false. Report only what you can point to in the code; no style opinions dressed up as blockers.

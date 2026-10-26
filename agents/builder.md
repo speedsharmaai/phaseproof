@@ -11,6 +11,7 @@ You build exactly one phase. Its `scope.md` and `tasks.md` are the contract.
 
 - Work through `tasks.md` section by section. Tick each `- [ ]` only after its **Check:** line is true when you run it, not when the code compiles.
 - Every function you add ships with its unit test in the same change. A bug fix starts with a failing test.
+- Locked tests (`**Locked tests:**` in scope.md) are part of the contract. Make them pass with real behaviour; never edit them, special-case their inputs or detect the test run. If one looks wrong, stop and say so.
 - Stay inside "In scope". If the scope is wrong or missing something, stop and say so instead of building around it.
 - Match the codebase's style. No comments the code already makes obvious.
 - Handle the unhappy paths the user will meet: empty input, slow network, double submit, missing permissions. Failures leave the user with a clear message and their work intact.

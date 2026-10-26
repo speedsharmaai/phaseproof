@@ -27,8 +27,9 @@ phaseproof is the process I ran by hand across a dozen shipped projects, packed 
 1. **Docs before code.** Each phase gets a `scope.md` with a measurable "Done when" and a `tasks.md` where every section ends in a **Check:** you can run.
 2. **A different model reviews.** Sonnet builds, Opus reviews. The reviewer sees the spec and the diff, not the builder's reasoning, and must answer `VERDICT: PASS | FAIL` with `file:line` evidence.
 3. **You approve.** Code stays closed until the docs pass review and you run `/phaseproof:approve`.
-4. **Checks are re-run, not trusted.** The gate script runs your test and typecheck commands itself before it closes a phase.
-5. **Ship with proof.** New build on a spare port, health check, swap, keyword check on the live URL, rollback written down.
+4. **Checks are re-run, not trusted.** The gate script runs your test and typecheck commands itself before it closes a phase, refuses if those commands changed since you approved, and refuses if code changed after the code review was saved.
+5. **Tests can be locked.** Acceptance tests written with the plan and listed under **Locked tests:** are approved with it. After that the builder has to make them pass; it cannot edit them.
+6. **Ship with proof.** New build on a spare port, health check, swap, keyword check on the live URL, rollback written down.
 
 ## How a phase flows
 
@@ -83,15 +84,21 @@ When `.phaseproof/state.json` exists in a project, a `PreToolUse` hook:
 - blocks `Write`, `Edit`, `MultiEdit` and `NotebookEdit` on code until the current phase is approved, and again after its gate passes
 - closes code again when `scope.md`, `tasks.md` or `screens.md` change after approval; re-approving a full phase then needs a fresh docs review. Only the owner makes a phase quick, with `approve --quick`; nothing in scope.md can. Each phase number may have one folder
 - closes code when a phase is blocked after two failed code reviews, until the owner approves it again
+- keeps locked tests closed: files listed under **Locked tests:** in scope.md may be written while the phase is planned (only if they look like test files), and are closed to file tools once it is approved. Their contents are part of the approved scope, so a shell edit or deletion closes code and the gate until the owner approves again. Approval refuses a locked test that is missing, outside the project or not a test
+- closes code and refuses the gate when the checks or doc paths in `.phaseproof/config.json` change after approval, so a builder cannot swap the test command for `true`. Approvals from before 0.5 have no record of the config and are not checked
 - always allows Markdown, `docs/`, `phases/` and `design/`
 - blocks writes to `.phaseproof/gates`, `approvals`, `runs` and `blocks`, by file tools or by Bash, and blocks running `approve` from Bash
 - catches shell writes: while code is closed, a `PreToolUse` hook records `git status` before every Bash call and `PostToolUse` / `PostToolUseFailure` hooks compare it after. If the command changed, committed or wiped code (including your own uncommitted changes), Claude is told which files and asked to stop and wait for you, and you get a notice too. phaseproof itself never modifies or deletes a file, and never tells Claude to run a destructive fix
+
+Saving the code review with the Write or Edit tool records which code it saw: the paths that differ from the approval's base, with a hash of each. The gate compares that record with the code as it is. A tracked file changed, reverted or deleted after the review refuses the gate and names the file; an untracked file that appears or changes afterwards (coverage output, snapshots) only warns. Staging or committing reviewed code is not a change. A review saved some other way, or edited after it was recorded, gets a warning instead of a comparison.
 
 The gate script also compares test files with the first approval and prints warnings, without blocking, for tests that look deleted and for newly added skip or focus markers (`.skip`, `.only`, `xit`, `@pytest.mark.skip`, `#[ignore]` and similar). Renames that are committed, staged, or unchanged moves are recognised; a test moved and edited without staging shows up as a possible deletion until you `git add` it. Files the owner lists under **Removes tests:** in scope.md (comma-separated or as a bullet list, paths relative to the project folder; a path ending in `/` covers a folder) are left out. Tests inside git submodules, outside a sparse checkout, in gitignored files, or behind a git clean filter are not compared reliably, and each git call gives up after 20 seconds with a warning. These checks warn rather than block because git has too many ways to move a file for a pattern to be certain; the code reviewer and you make the call.
 
 At the start of every session, and after `/compact`, `/clear` or a resume, a `SessionStart` hook puts the current phase, its Goal and Done when, and whether code is open back into Claude's context, so a long session does not drift off the plan.
 
 In any project without `.phaseproof/state.json` it does nothing. If the hook gets input it cannot parse, it allows the call rather than locking your session.
+
+Locked tests stop edits to the listed files. They do not stop code that special-cases those tests to pass; the code reviewer is told to treat that as a blocker, and that is a model's judgement, not a guarantee.
 
 It is a guardrail against drift, not a security boundary. The shell guard detects writes after the fact; it does not prevent or undo them. It only sees what `git status` sees: gitignored or excluded paths, files marked assume-unchanged, changes inside nested repos, files outside the project, background and detached processes, commands interrupted before they finish, a command that deletes `.git` or the guard's own records, and network calls are out of its reach. Files over 1 MB, and runs with more than 2000 dirty files, are compared by size and modification time only, so a same-size rewrite that keeps the timestamp goes unnoticed. It cannot tell who made a change, so an edit you save in your editor during a command is reported too. For real prevention, use an OS-level sandbox. A review report is model output like any other. What it reliably stops is the common failure: an agent that skips the plan, skips the review, or calls a phase done with red tests.
 
@@ -118,7 +125,7 @@ your-project/
     ├── state.json                current phase
     ├── reviews/                  reviewer reports, verbatim
     ├── approvals/                owner sign-offs
-    ├── runs/                     last check results
+    ├── runs/                     last check results, what code the review saw
     ├── blocks/                   phases stopped after two failed reviews
     └── gates/                    closed phases, with check results and review hashes
 ```
@@ -129,6 +136,7 @@ Commit `.phaseproof/` with the code. The approvals and gates are the audit trail
 
 - `scripts/session.mjs` runs at session start and after compact, clear or resume. It reads `.phaseproof/` and `phases/` and prints a short status for Claude; it writes nothing.
 - The hook runs `node ${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs` before file edits and Bash calls. It reads files under `.phaseproof/` in your project and prints an allow or deny decision. It makes no network calls.
+- After a Write or Edit to `.phaseproof/reviews/phase-NN-code.md`, `scripts/post.mjs` runs `git diff --name-only`, `git ls-files --others` and `git hash-object --stdin-paths` (without writing objects) and records paths and hashes, no file contents, in `.phaseproof/runs/`. For any other file it does nothing.
 - While code is closed, `scripts/hook.mjs` and `scripts/post.mjs` run `git status`, `git rev-parse` and `git diff --name-only` around Bash calls to find shell writes to code. They write only short-lived records to `phaseproof/` inside the git directory (`.git/phaseproof/`, or the worktree's or submodule's own git dir), holding paths, sizes and hashes but no file contents, and never change your files.
 - At gate time the test guard runs read-only git commands (`ls-tree`, `ls-files`, `diff -M`, and `hash-object --stdin-paths` without writing) to compare test files with the approval. It writes nothing to your repository.
 - `scripts/phaseproof.mjs` reads and writes files under `.phaseproof/`, and runs `git rev-parse HEAD` to record the commit.
@@ -146,7 +154,7 @@ No server, no telemetry, nothing collected. See [PRIVACY.md](PRIVACY.md).
 
 ## Status
 
-v0.4.0. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
+v0.5.0. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
 
 ## Related projects
 

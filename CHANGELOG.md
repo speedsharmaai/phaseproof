@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 - 2026-10-26
+
+- Locked tests: acceptance tests listed under `**Locked tests:**` in scope.md can be written while the phase is planned, are reviewed with the docs, and are closed to edits once the owner approves. Their contents are part of the approved scope, so changing or deleting them by any route closes code and the gate until the owner approves again
+- The gate refuses when the checks or doc paths in `.phaseproof/config.json` changed after approval. Before, a builder could replace the test command and the gate would re-run that instead
+- The gate refuses when tracked code changed after the code review was saved, and names the files. New untracked files only warn. The review is fingerprinted when it is saved with the Write tool
+- The code reviewer reports each "Done when" criterion as verified or not, with the evidence, and treats code that special-cases locked tests as a blocker
+- The doc reviewer checks that locked tests test what "Done when" promises
+
 ## 0.4.0 - 2026-10-20
 
 - `/phaseproof:quick` for small changes: the owner approves with `approve --quick`, which skips the docs review; one code review and the gate still apply. Nothing in scope.md can make a phase quick
