@@ -1,4 +1,4 @@
-import { lstatSync, readlinkSync } from 'node:fs';
+import { lstatSync, readlinkSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isDoc } from './decide.mjs';
@@ -83,16 +83,19 @@ export function recordReview(root, file) {
   const base = baseOf(readJson(approvalFile(root, phase), null));
   if (!text || !base) return false;
   const review = sha256(text);
+  rmSync(reviewRecordFile(root, phase), { force: true });
   const fingerprint = codeFingerprint(root, base);
   const record = { phase, recordedAt: new Date().toISOString(), base, review };
   writeJson(reviewRecordFile(root, phase), fingerprint ? { ...record, fingerprint } : { ...record, error: `git could not list the code that differs from the approval's base ${base.slice(0, 12)}` });
   return Boolean(fingerprint);
 }
 
+const inGit = (root) => git(root, ['rev-parse', '--is-inside-work-tree']).stdout?.trim() === 'true';
+
 export function reviewDrift(root, phase, approval, reviewText) {
-  if (!baseOf(approval)) return { changed: [], fresh: [] };
-  const record = readJson(reviewRecordFile(root, phase), null);
   const skip = (why) => ({ changed: [], fresh: [], warning: `code changes made after the code review were not compared: ${why}` });
+  if (!baseOf(approval)) return inGit(root) ? skip('the phase was approved before the repository had a commit') : { changed: [], fresh: [] };
+  const record = readJson(reviewRecordFile(root, phase), null);
   if (!record) return skip('there is no record of the code it saw. The record is made when the review is saved with the Write or Edit tool; a review saved another way, or a git call that timed out, leaves none');
   if (record.review !== sha256(reviewText)) return skip('the review file is not the one that was recorded. It was changed some other way than the Write or Edit tool');
   if (!isFingerprint(record.fingerprint)) return skip(typeof record.error === 'string' ? record.error : 'the record is damaged');

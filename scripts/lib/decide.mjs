@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import {
   approvalFile,
   blockFile,
@@ -71,8 +72,17 @@ function lockedReason(root, rel) {
   if (approval && listsPath(root, Object.keys(approval.locked ?? {}), rel)) {
     return `${rel} is a locked test of phase ${phase}: it was approved with the scope and stays as it is while the phase builds. If it is wrong, stop and tell the owner; they edit it themselves, or take it off **Locked tests:** and re-approve.`;
   }
-  const planning = !approval || scopeChanged(root, phase);
-  return planning && isTestFile(rel) && !linkedPath(root, rel) ? null : undefined;
+  if (!isTestFile(rel) || linkedPath(root, rel)) return undefined;
+  if (!approval) return null;
+  const replanning = scopeChanged(root, phase) && !existsSync(gateFile(root, phase)) && !inCommit(root, approval.base ?? approval.head, rel);
+  return replanning ? null : undefined;
+}
+
+const catFile = (root, object) => spawnSync('git', ['--no-optional-locks', 'cat-file', '-e', object], { cwd: root, timeout: 5000 }).status;
+
+function inCommit(root, rev, rel) {
+  if (typeof rev !== 'string' || !/^[0-9a-f]{7,64}$/.test(rev) || catFile(root, `${rev}^{commit}`) !== 0) return true;
+  return catFile(root, `${rev}:./${rel}`) !== 128;
 }
 
 export function closedReason(root) {
@@ -88,7 +98,7 @@ export function closedReason(root) {
     const quick = readJson(approvalFile(root, phase), {}).size === 'quick';
     const locked = changedLocked(root, phase);
     const what = locked.length
-      ? `locked test ${locked.join(', ')} changed after phase ${phase} was approved. Restore it if that was not meant to happen.`
+      ? `locked test ${locked.join(', ')} changed after phase ${phase} was approved. If that was not meant to happen, stop and ask the owner to restore it.`
       : `phase ${phase} scope changed after it was approved.`;
     return `${what} ${quick ? `The owner runs /phaseproof:approve ${phase} --quick again, or reviews the docs first for a full approval.` : `Get the docs reviewed again, then the owner runs /phaseproof:approve ${phase}.`}`;
   }

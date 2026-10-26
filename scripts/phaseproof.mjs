@@ -219,7 +219,7 @@ const commands = {
     if (existsSync(blockFile(root, phase))) refuse(`phase ${phase} is blocked. The owner has to approve it again first`);
     if (scopeChanged(root, phase)) {
       const locked = changedLocked(root, phase);
-      refuse(locked.length ? `locked test ${listed(locked)} changed since phase ${phase} was approved. Restore it, or the owner approves again` : `phase ${phase} scope changed since approval (scope.md, tasks.md, screens.md or the list of locked tests). Review it and approve again`);
+      refuse(locked.length ? `locked test ${listed(locked)} changed since phase ${phase} was approved. The owner restores it, or approves again` : `phase ${phase} scope changed since approval (scope.md, tasks.md, screens.md or the list of locked tests). Review it and approve again`);
     }
     if (configChanged(root, phase)) refuse(`the checks or doc paths in .phaseproof/config.json changed since phase ${phase} was approved. The owner approves again`);
     const approval = (readJson(approvalFile(root, phase), {}) ?? {});

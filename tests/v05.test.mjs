@@ -69,9 +69,9 @@ test('after approval a locked test is closed to file tools, and a shell edit clo
   assert.match(d.reason, /locked test of phase 01/);
   assert.equal(write(root, 'src/app.js').allow, true);
   writeFileSync(join(root, 'tests/otp.test.js'), 'test("otp", () => {});\n');
-  assert.match(write(root, 'src/app.js').reason, /locked test tests\/otp\.test\.js changed after phase 01 was approved\. Restore it/);
+  assert.match(write(root, 'src/app.js').reason, /locked test tests\/otp\.test\.js changed after phase 01 was approved\. If that was not meant to happen, stop and ask the owner to restore it/);
   saveReview(root);
-  assert.match(cli(root, 'gate').err, /locked test tests\/otp\.test\.js changed since phase 01 was approved\. Restore it, or the owner approves again/);
+  assert.match(cli(root, 'gate').err, /locked test tests\/otp\.test\.js changed since phase 01 was approved\. The owner restores it, or approves again/);
   rmSync(join(root, 'tests/otp.test.js'));
   assert.match(cli(root, 'gate').err, /locked test tests\/otp\.test\.js changed/);
   writeFileSync(join(root, 'tests/otp.test.js'), 'test("otp", () => { expect(code).toBe("123456"); });\r\n');
@@ -333,4 +333,67 @@ test('a fingerprint survives being written and read back', (t) => {
   assert.deepEqual(driftSince(back, codeFingerprint(root, head)), { changed: [], fresh: [] });
   put(root, '__proto__', 'y');
   assert.deepEqual(driftSince(back, codeFingerprint(root, head)).changed, ['__proto__']);
+});
+
+test('re-planning cannot open a test that existed at approval, nor any test after the gate', (t) => {
+  const root = project(t, LOCKED);
+  put(root, 'tests/otp.test.js', 'test("otp", () => {});\n');
+  put(root, 'tests/old.test.js', 'test("old", () => { expect(1).toBe(1); });\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'tests');
+  cli(root, 'approve', '--new-base');
+  put(root, 'phases/phase-01-otp/scope.md', `${LOCKED}\n**Locked tests:** tests/old.test.js, tests/fresh.test.js\n`);
+  assert.match(write(root, 'tests/old.test.js').reason, /scope changed after it was approved/);
+  assert.equal(write(root, 'tests/fresh.test.js').allow, true);
+  put(root, 'phases/phase-01-otp/scope.md', LOCKED);
+  put(root, REVIEW, 'VERDICT: FAIL\n- [blocker] src/app.js:1 wrong\n');
+  cli(root, 'block');
+  put(root, 'phases/phase-01-otp/scope.md', `${LOCKED}\n**Locked tests:** tests/old.test.js, tests/fresh.test.js\n`);
+  assert.equal(write(root, 'tests/old.test.js').allow, false);
+  assert.equal(write(root, 'tests/fresh.test.js').allow, true);
+  put(root, 'phases/phase-01-otp/scope.md', LOCKED);
+  cli(root, 'approve');
+  saveReview(root);
+  assert.equal(cli(root, 'gate').code, 0);
+  put(root, 'phases/phase-01-otp/scope.md', `${LOCKED}\n**Locked tests:** tests/fresh.test.js\n`);
+  assert.match(write(root, 'tests/fresh.test.js').reason, /scope changed|already passed its gate/);
+});
+
+test('re-planning needs a base commit to tell new tests from old ones', (t) => {
+  const root = project(t, LOCKED);
+  put(root, 'tests/otp.test.js', 'test("otp", () => {});\n');
+  cli(root, 'approve');
+  const a = readJson(approvalFile(root, '01'));
+  writeJson(approvalFile(root, '01'), { ...a, base: 'e'.repeat(40) });
+  put(root, 'phases/phase-01-otp/scope.md', `${LOCKED}\n**Locked tests:** tests/fresh.test.js\n`);
+  assert.equal(write(root, 'tests/fresh.test.js').allow, false);
+});
+
+test('a malformed config cannot open code or crash approve', (t) => {
+  const root = project(t);
+  const config = join(root, '.phaseproof/config.json');
+  writeJson(config, { checks: 'npm test', docPaths: 1 });
+  assert.match(write(root, 'src/app.js').reason, /not approved/);
+  const r = cli(root, 'approve');
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /No checks are configured/);
+  writeFileSync(config, '[1, 2]');
+  assert.match(cli(root, 'status').out, /phase 01/);
+});
+
+test('a repository with no commits at approval says the review was not compared', (t) => {
+  const root = tempProject(t);
+  git(root, 'init', '-q');
+  cli(root, 'init', '--check', 'node -e "process.exit(0)"');
+  put(root, 'phases/phase-01-otp/scope.md', SCOPE);
+  put(root, '.phaseproof/reviews/phase-01-docs.md', PASS);
+  cli(root, 'approve');
+  saveReview(root);
+  const r = cli(root, 'gate');
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /not compared: the phase was approved before the repository had a commit/);
+});
+
+test('locked paths written in another Unicode form still match', () => {
+  assert.equal(samePath('tests/café.test.js', 'tests/café.test.js', false), true);
 });

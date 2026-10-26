@@ -25,7 +25,8 @@ export function toProjectPath(root, file) {
 }
 
 const FOLDS_CASE = process.platform === 'darwin' || process.platform === 'win32';
-export const samePath = (a, b, folds = FOLDS_CASE) => (folds ? a.toLowerCase() === b.toLowerCase() : a === b);
+const nfc = (s) => s.normalize('NFC');
+export const samePath = (a, b, folds = FOLDS_CASE) => (folds ? nfc(a).toLowerCase() === nfc(b).toLowerCase() : nfc(a) === nfc(b));
 
 export function linkedPath(root, rel) {
   const parts = rel.split('/');
@@ -43,7 +44,7 @@ export function exactCase(root, rel) {
   const parts = rel.split('/');
   for (let i = 0; i < parts.length; i++) {
     try {
-      if (!readdirSync(join(root, ...parts.slice(0, i))).includes(parts[i])) return false;
+      if (!readdirSync(join(root, ...parts.slice(0, i))).some((name) => nfc(name) === nfc(parts[i]))) return false;
     } catch {
       return false;
     }
@@ -73,7 +74,13 @@ export function readText(file) {
   }
 }
 
-export const loadConfig = (root) => ({ ...DEFAULT_CONFIG, ...readJson(ppPath(root, 'config.json'), {}) });
+const strings = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+
+export function loadConfig(root) {
+  const raw = readJson(ppPath(root, 'config.json'), {});
+  const config = { ...DEFAULT_CONFIG, ...(raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) };
+  return { ...config, checks: strings(config.checks) ? config.checks : [], docPaths: strings(config.docPaths) ? config.docPaths : DEFAULT_CONFIG.docPaths };
+}
 export const loadState = (root) => readJson(ppPath(root, 'state.json'), null);
 
 const isDir = (path) => {
