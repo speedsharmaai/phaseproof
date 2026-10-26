@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.6.0 - unreleased
+## 0.7.0 - 2026-10-27
+
+- `/phaseproof:doctor` checks Node, git, the plugin's hooks, config, checks, the phase folder and scope, locked tests, a stale or lost approval, an ignored `.phaseproof/` and piles of untracked output, and says what to fix
+- `/phaseproof:report` shows what the process caught, phase by phase: review rounds, failed reviews, blockers found and gate warnings. Review history is recorded from this version on, one line per review saved
+
+## 0.6.0 - 2026-10-27
 
 - `**Gate runs:**` in scope.md: phase commands the gate runs itself next to the project's checks, approved with the scope. Point one at the locked tests and a changed project test command cannot drop them (runner config still can; see the README)
 - `**Budget:**` in scope.md (`300 lines, 8 files`): the gate warns when the phase's code outgrows it, `status` shows how much is used, and the code reviewer treats unjustified overruns as a major
