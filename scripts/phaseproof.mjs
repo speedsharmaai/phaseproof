@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, rmSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { allPassed, runChecks } from './lib/checks.mjs';
-import { reviewDrift } from './lib/drift.mjs';
+import { codeFingerprint, reviewDrift } from './lib/drift.mjs';
 import { isMain } from './lib/main.mjs';
 import {
   approvalFile,
@@ -126,7 +126,10 @@ function checkResults(root, phase) {
   const { checks } = loadConfig(root);
   if (!checks.length) refuse('no checks configured. Add commands to "checks" in .phaseproof/config.json');
   const results = runChecks(root, checks);
-  writeJson(runFile(root, phase), { phase, ranAt: new Date().toISOString(), head: gitHead(root), results });
+  const approval = readJson(approvalFile(root, phase), null);
+  const base = approval?.base ?? approval?.head ?? null;
+  const fingerprint = base ? codeFingerprint(root, base) : null;
+  writeJson(runFile(root, phase), { phase, ranAt: new Date().toISOString(), head: gitHead(root), results, ...(fingerprint ? { base, fingerprint } : {}) });
   return results;
 }
 

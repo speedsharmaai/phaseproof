@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0 - unreleased
+
+- A Stop hook asks Claude once to fix red checks, or say plainly that they are red, before it finishes a turn with a failed check run and no code changed since
+
 ## 0.5.0 - 2026-10-26
 
 - Locked tests: acceptance tests listed under `**Locked tests:**` in scope.md can be written while the phase is planned, are reviewed with the docs, and are closed to edits once the owner approves. Their contents are part of the approved scope, so changing or deleting them by any route closes code and the gate until the owner approves again, and the message names the file
