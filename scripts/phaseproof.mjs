@@ -229,7 +229,7 @@ const commands = {
     const docs = approval.size === 'quick' ? readText(reviewFile(root, phase, 'docs')) : requireReview(root, phase, 'docs');
     const code = requireReview(root, phase, 'code');
     const drift = reviewDrift(root, phase, approval, code);
-    if (drift.unknown) refuse(`code could not be compared with the code review: ${drift.unknown}. Fix that, or gitignore the file, and run the gate again`);
+    if (drift.unknown) refuse(`code could not be compared with the code review: ${drift.unknown}`);
     if (drift.changed.length) {
       refuse(`code changed after the code review was saved: ${listed(drift.changed)}. Review the current code again. If a check, formatter or build wrote these files, commit or gitignore that output before the review`);
     }

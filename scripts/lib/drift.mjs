@@ -16,7 +16,9 @@ const git = (root, args, input) =>
 const zlist = (r) => (r.status === 0 ? r.stdout.split('\0').filter(Boolean) : null);
 const isCode = (rel, docPaths) => rel !== '.phaseproof' && !rel.startsWith('.phaseproof/') && !isDoc(rel, docPaths);
 
-function contentHashes(root, paths) {
+const timedOut = (r) => Boolean(r.error || r.signal);
+
+function contentHashes(root, paths, why) {
   const out = Object.create(null);
   const regular = [];
   for (const path of paths) {
@@ -32,6 +34,7 @@ function contentHashes(root, paths) {
   if (!regular.length) return out;
   if (regular.some((p) => p.includes('\n'))) return null;
   const r = git(root, ['hash-object', '--no-filters', '--stdin-paths'], `${regular.map((p) => join(root, p)).join('\n')}\n`);
+  if (timedOut(r)) why.reason = 'git took longer than 20 seconds to hash the changed files';
   const oids = r.status === 0 ? r.stdout.trim().split('\n') : [];
   if (oids.length !== regular.length) return null;
   regular.forEach((p, i) => {
@@ -40,15 +43,27 @@ function contentHashes(root, paths) {
   return out;
 }
 
-export function codeFingerprint(root, base) {
+export function codeFingerprint(root, base, why = {}) {
   if (typeof base !== 'string' || !/^[0-9a-f]{7,64}$/.test(base)) return null;
   const { docPaths } = loadConfig(root);
-  const tracked = zlist(git(root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--relative', '--name-only', '-z', base, '--', '.']));
-  const untracked = zlist(git(root, ['ls-files', '--others', '--exclude-standard', '-z', '--', '.']));
+  const diff = git(root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--relative', '--name-only', '-z', base, '--', '.']);
+  const others = git(root, ['ls-files', '--others', '--exclude-standard', '-z', '--', '.']);
+  if (timedOut(diff) || timedOut(others)) why.reason = 'git took longer than 20 seconds to list the changed files';
+  const tracked = zlist(diff);
+  const untracked = zlist(others);
   if (!tracked || !untracked) return null;
-  const t = contentHashes(root, tracked.filter((p) => isCode(p, docPaths)));
-  const u = contentHashes(root, untracked.filter((p) => isCode(p, docPaths)));
+  const t = contentHashes(root, tracked.filter((p) => isCode(p, docPaths)), why);
+  const u = contentHashes(root, untracked.filter((p) => isCode(p, docPaths)), why);
   return t && u ? { tracked: t, untracked: u } : null;
+}
+
+export function hiddenFromDiff(root) {
+  const r = git(root, ['ls-files', '-v', '-z', '--', '.']);
+  if (r.status !== 0) return [];
+  return r.stdout
+    .split('\0')
+    .filter((entry) => /^([a-z]|S) /.test(entry))
+    .map((entry) => entry.slice(2));
 }
 
 const isMap = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((x) => typeof x === 'string');
@@ -100,7 +115,10 @@ export function reviewDrift(root, phase, approval, reviewText) {
   if (!record) return skip('there is no record of the code it saw. The record is made when the review is saved with the Write or Edit tool; a review saved another way, or a git call that timed out, leaves none');
   if (record.review !== sha256(reviewText)) return skip('the review file is not the one that was recorded. It was changed some other way than the Write or Edit tool');
   if (!isFingerprint(record.fingerprint)) return skip(typeof record.error === 'string' ? record.error : 'the record is damaged');
-  const now = codeFingerprint(root, record.base);
-  if (!now) return unknown('git could not list or read the code as it is now (an unreadable file, or a file name with a line break, can cause this)');
-  return driftSince(record.fingerprint, now);
+  const why = {};
+  const now = codeFingerprint(root, record.base, why);
+  if (!now) return unknown(why.reason ? `${why.reason}; run the gate again` : 'git could not list or read the code as it is now (an unreadable file, or a file name with a line break, can cause this). Fix that, or gitignore the file');
+  const hidden = hiddenFromDiff(root);
+  const drift = driftSince(record.fingerprint, now);
+  return hidden.length ? { ...drift, warning: `files marked assume-unchanged or skip-worktree are not compared with the review: ${hidden.slice(0, 5).join(', ')}${hidden.length > 5 ? ` and ${hidden.length - 5} more` : ''}` } : drift;
 }

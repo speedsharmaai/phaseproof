@@ -14,6 +14,8 @@ const git = (root, ...args) => spawnSync('git', ['-c', 'user.email=t@t', '-c', '
 const SCOPE = '# Phase 01\n\n**Goal:** sign in with a code\n\n**Done when:** a user signs in with the emailed code\n';
 const LOCKED = `${SCOPE}\n**Locked tests:** tests/otp.test.js\n`;
 const REVIEW = '.phaseproof/reviews/phase-01-code.md';
+const PINNED = 'e64fe665c18b692b3bda82decd2301ccf7ad59ac9e1f55cfa7b14f25a1354666';
+const PINNED_NONE = '23faa4698f87117f688c9d960dad10edb8eb16a96505c7bfccb19803430b8125';
 
 function project(t, scope = SCOPE, dir = '') {
   const top = tempProject(t);
@@ -85,6 +87,15 @@ test('scopes without locked tests hash as before, so older approvals stay valid'
   assert.notEqual(scopeHash(root, '01'), before);
   put(root, 'phases/phase-01-otp/scope.md', SCOPE);
   assert.equal(scopeHash(root, '01'), before);
+});
+
+test('the scope hash of a phase without locked tests is the same as in 0.4', (t) => {
+  const root = tempProject(t);
+  put(root, 'phases/phase-01-x/scope.md', '# Phase 01\n\n**Goal:** g\n');
+  put(root, 'phases/phase-01-x/tasks.md', '# Tasks\n');
+  assert.equal(scopeHash(root, '01'), PINNED);
+  put(root, 'phases/phase-01-x/scope.md', '# Phase 01\n\n**Goal:** g\n\n**Locked tests:** none\n');
+  assert.equal(scopeHash(root, '01'), PINNED_NONE);
 });
 
 test('changing the checks or doc paths after approval closes code and refuses the gate until the owner approves again', (t) => {
@@ -451,4 +462,18 @@ test('a recorded review with code that cannot be read now refuses the gate', { s
   saveReview(root);
   put(root, 'src/odd\nname.js', 'x');
   assert.match(cli(root, 'gate').err, /code could not be compared with the code review: git could not list or read the code/);
+});
+
+test('files hidden from git diff are named at the gate', (t) => {
+  const root = project(t);
+  cli(root, 'approve');
+  put(root, 'src/other.js', 'export const o = 1;\n');
+  git(root, 'add', 'src/other.js');
+  git(root, 'commit', '-qm', 'other');
+  put(root, 'src/app.js', 'export const app = 2;\n');
+  saveReview(root);
+  git(root, 'update-index', '--assume-unchanged', 'src/other.js');
+  const r = cli(root, 'gate');
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /assume-unchanged or skip-worktree are not compared with the review: src\/other\.js/);
 });
