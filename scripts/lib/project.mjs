@@ -105,47 +105,13 @@ export function phaseDir(root, phase) {
 }
 
 function visibleText(md) {
-  const kept = [];
-  let fence = null;
-  let comment = false;
-  for (const raw of md.replace(/^\uFEFF/, '').replace(/\r/g, '').split('\n')) {
-    if (fence) {
-      const close = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(raw);
-      if (close && close[1][0] === fence[0] && close[1].length >= fence.length && !close[2].trim()) fence = null;
-      kept.push('');
-      continue;
-    }
-    let line = raw;
-    let out = '';
-    while (line) {
-      if (comment) {
-        const end = line.indexOf('-->');
-        if (end < 0) {
-          line = '';
-          break;
-        }
-        comment = false;
-        line = line.slice(end + 3);
-        continue;
-      }
-      const start = line.indexOf('<!--');
-      if (start < 0) {
-        out += line;
-        break;
-      }
-      out += line.slice(0, start);
-      line = line.slice(start + 4);
-      comment = true;
-    }
-    const open = !comment && out === raw ? /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(out) : null;
-    if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
-      fence = open[1];
-      kept.push('');
-      continue;
-    }
-    kept.push(out);
-  }
-  return kept.join('\n');
+  let text = md.replace(/\r/g, '').replace(/```[\s\S]*?(```|$)/g, '');
+  let before;
+  do {
+    before = text;
+    text = text.replace(/<!--[\s\S]*?(-->|$)/g, '');
+  } while (text !== before);
+  return text;
 }
 
 const BULLET = /^\s*(?:[-*+]|\d+[.)])\s+/;
