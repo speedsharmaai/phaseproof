@@ -1,15 +1,21 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readHistory } from './history.mjs';
-import { approvalFile, blockFile, gateFile, loadState, readJson } from './project.mjs';
+import { approvalFile, blockFile, gateFile, loadState, padPhase, readJson } from './project.mjs';
 
 function phases(root) {
   const found = new Map();
   try {
     for (const name of readdirSync(join(root, 'phases')).sort()) {
       const m = /^phase-(\d{2,3})(?:-(.*))?$/.exec(name);
-      if (!m || String(Number(m[1])).padStart(2, '0') !== m[1] || found.has(m[1])) continue;
-      if (statSync(join(root, 'phases', name)).isDirectory()) found.set(m[1], m[2] ?? '');
+      if (!m || padPhase(m[1]) !== m[1] || found.has(m[1])) continue;
+      let dir = false;
+      try {
+        dir = statSync(join(root, 'phases', name)).isDirectory();
+      } catch {
+        dir = false;
+      }
+      if (dir) found.set(m[1], m[2] ?? '');
     }
   } catch {
     // no phases folder
