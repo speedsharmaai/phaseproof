@@ -16,6 +16,7 @@ import {
   readJson,
   scopeChanged,
   scopeField,
+  scopeList,
   scopeText,
 } from './project.mjs';
 
@@ -64,7 +65,7 @@ export function doctor(root, { node = process.versions.node, pluginRoot = proces
   }
   ok(`tracking phase ${phase}`);
 
-  if (!parses(ppPath(root, 'config.json'))) fail('.phaseproof/config.json is not valid JSON (a trailing comma?), so its checks and doc paths are ignored');
+  if (!parses(ppPath(root, 'config.json'))) fail('.phaseproof/config.json cannot be read as JSON (a trailing comma, or not a file), so its checks and doc paths are ignored');
   const raw = readJson(ppPath(root, 'config.json'), {}) ?? {};
   if (raw.checks !== undefined && !strings(raw.checks)) warn('"checks" in .phaseproof/config.json is not a list of commands, so it is ignored');
   if (raw.docPaths !== undefined && !strings(raw.docPaths)) warn('"docPaths" in .phaseproof/config.json is not a list of paths, so the defaults are used');
@@ -80,7 +81,11 @@ export function doctor(root, { node = process.versions.node, pluginRoot = proces
     const scope = scopeText(root, phase);
     if (!scope) warn(`phase ${phase} has no scope.md yet`);
     else {
-      for (const field of ['Goal', 'Done when']) if (scopeField(scope, field) === null) warn(`scope.md of phase ${phase} has no **${field}:** line`);
+      for (const field of ['Goal', 'Done when']) {
+        const value = scopeField(scope, field);
+        if (value === null) warn(`scope.md of phase ${phase} has no **${field}:** line`);
+        else if (!value && !scopeList(scope, field).length) warn(`**${field}:** in scope.md of phase ${phase} is empty`);
+      }
     }
   }
 
