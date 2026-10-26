@@ -94,6 +94,8 @@ Saving the code review with the Write or Edit tool records the code as it is at 
 
 The gate script also compares test files with the first approval and prints warnings, without blocking, for tests that look deleted and for newly added skip or focus markers (`.skip`, `.only`, `xit`, `@pytest.mark.skip`, `#[ignore]` and similar). Renames that are committed, staged, or unchanged moves are recognised; a test moved and edited without staging shows up as a possible deletion until you `git add` it. Files the owner lists under **Removes tests:** in scope.md (comma-separated or as a bullet list, paths relative to the project folder; a path ending in `/` covers a folder) are left out. Tests inside git submodules, outside a sparse checkout, in gitignored files, or behind a git clean filter are not compared reliably, and each git call gives up after 20 seconds with a warning. These checks warn rather than block because git has too many ways to move a file for a pattern to be certain; the code reviewer and you make the call.
 
+When Claude is about to finish a turn while a phase is building, a `Stop` hook checks the last recorded `check` run. If it failed and no code has changed since, Claude is asked once to fix it or tell you plainly that the checks are red and why it is stopping. It never runs the checks itself, asks only once per stop, and stays quiet while background tasks run, after a block, and after the gate.
+
 At the start of every session, and after `/compact`, `/clear` or a resume, a `SessionStart` hook puts the current phase, its Goal and Done when, and whether code is open back into Claude's context, so a long session does not drift off the plan.
 
 In any project without `.phaseproof/state.json` it does nothing. If the hook gets input it cannot parse, it allows the call rather than locking your session.
@@ -134,6 +136,7 @@ Commit `.phaseproof/` with the code. The approvals and gates are the audit trail
 
 ## What it runs and sends
 
+- `scripts/stop.mjs` runs when Claude finishes a turn. It reads `.phaseproof/` and, if the last check run failed, runs the same read-only git commands as the review record to see whether code changed since; it writes nothing.
 - `scripts/session.mjs` runs at session start and after compact, clear or resume. It reads `.phaseproof/` and `phases/` and prints a short status for Claude; it writes nothing.
 - The hook runs `node ${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs` before file edits and Bash calls. It reads files under `.phaseproof/` in your project and prints an allow or deny decision. It makes no network calls.
 - After a Write or Edit to `.phaseproof/reviews/phase-NN-code.md`, `scripts/post.mjs` runs `git diff --name-only`, `git ls-files --others` and `git hash-object --stdin-paths` (without writing objects) and records paths and hashes, no file contents, in `.phaseproof/runs/`. For any other file it does nothing.
