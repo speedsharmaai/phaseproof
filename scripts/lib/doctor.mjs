@@ -1,5 +1,6 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { lockIssues } from './locks.mjs';
 import {
@@ -21,8 +22,18 @@ import {
 const git = (root, args) => spawnSync('git', ['--no-optional-locks', ...args], { cwd: root, encoding: 'utf8', timeout: 20000, maxBuffer: 256 * 1024 * 1024 });
 const strings = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 const MANY_UNTRACKED = 500;
+const OWN_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
-export function doctor(root, { node = process.versions.node, pluginRoot = process.env.CLAUDE_PLUGIN_ROOT } = {}) {
+function parses(file) {
+  try {
+    JSON.parse(readFileSync(file, 'utf8'));
+    return true;
+  } catch (e) {
+    return e.code === 'ENOENT';
+  }
+}
+
+export function doctor(root, { node = process.versions.node, pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || OWN_ROOT } = {}) {
   const out = [];
   const ok = (text) => out.push({ level: 'ok', text });
   const warn = (text) => out.push({ level: 'warn', text });
@@ -32,12 +43,8 @@ export function doctor(root, { node = process.versions.node, pluginRoot = proces
   if (major >= 20) ok(`Node ${node}`);
   else fail(`Node ${node} is too old. phaseproof needs Node 20 or later on PATH`);
 
-  if (pluginRoot) {
-    if (existsSync(join(pluginRoot, 'hooks', 'hooks.json'))) ok('plugin hooks file found');
-    else fail(`no hooks/hooks.json under ${pluginRoot}. Reinstall the plugin`);
-  } else {
-    warn('run this from Claude Code (/phaseproof:doctor) to check the plugin install too');
-  }
+  if (existsSync(join(pluginRoot, 'hooks', 'hooks.json'))) ok('plugin hooks file found');
+  else fail(`no hooks/hooks.json under ${pluginRoot}. Reinstall the plugin`);
 
   const version = git(root, ['--version']);
   const inGit = version.status === 0 && git(root, ['rev-parse', '--is-inside-work-tree']).stdout?.trim() === 'true';
@@ -57,6 +64,7 @@ export function doctor(root, { node = process.versions.node, pluginRoot = proces
   }
   ok(`tracking phase ${phase}`);
 
+  if (!parses(ppPath(root, 'config.json'))) fail('.phaseproof/config.json is not valid JSON (a trailing comma?), so its checks and doc paths are ignored');
   const raw = readJson(ppPath(root, 'config.json'), {}) ?? {};
   if (raw.checks !== undefined && !strings(raw.checks)) warn('"checks" in .phaseproof/config.json is not a list of commands, so it is ignored');
   if (raw.docPaths !== undefined && !strings(raw.docPaths)) warn('"docPaths" in .phaseproof/config.json is not a list of paths, so the defaults are used');
@@ -72,7 +80,7 @@ export function doctor(root, { node = process.versions.node, pluginRoot = proces
     const scope = scopeText(root, phase);
     if (!scope) warn(`phase ${phase} has no scope.md yet`);
     else {
-      for (const field of ['Goal', 'Done when']) if (!scopeField(scope, field)) warn(`scope.md of phase ${phase} has no **${field}:** line`);
+      for (const field of ['Goal', 'Done when']) if (scopeField(scope, field) === null) warn(`scope.md of phase ${phase} has no **${field}:** line`);
     }
   }
 
@@ -97,6 +105,12 @@ export function doctor(root, { node = process.versions.node, pluginRoot = proces
   }
 
   const phasesDir = join(root, 'phases');
-  if (!existsSync(phasesDir) || !readdirSync(phasesDir).length) warn('no phases/ folder yet. /phaseproof:kickoff writes it');
+  let isFolder = false;
+  try {
+    isFolder = statSync(phasesDir).isDirectory() && readdirSync(phasesDir).length > 0;
+  } catch {
+    isFolder = false;
+  }
+  if (!isFolder) warn('no phases/ folder yet. /phaseproof:kickoff writes it');
   return out;
 }
