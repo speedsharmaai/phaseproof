@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
@@ -75,14 +75,27 @@ function lockedReason(root, rel) {
   const approval = readJson(approvalFile(root, phase), null);
   if (approval) {
     const locked = approval.locked && typeof approval.locked === 'object' ? Object.keys(approval.locked) : [];
-    if (!listsPath(root, locked, rel)) return undefined;
+    if (!listsPath(root, locked, rel) && !aliases(root, locked, rel)) return undefined;
     return `${rel} is a locked test of phase ${phase}: it was approved with the scope and stays as it is. If it is wrong, stop and tell the owner; they edit it themselves and approve again.`;
   }
   if (!listsPath(root, lockedTests(root, phase), rel) || !isTestFile(rel) || linkedPath(root, rel)) return undefined;
-  if (committed(root, rel)) {
-    return `${rel} is listed under **Locked tests:** but is already committed. Locked tests are new acceptance tests for this phase; existing tests stay closed until phase ${phase} is approved.`;
+  return committed(root, rel) ? undefined : null;
+}
+
+const realPath = (root, rel) => {
+  try {
+    return realpathSync.native(join(root, rel));
+  } catch {
+    return null;
   }
-  return null;
+};
+
+function aliases(root, locked, rel) {
+  const target = locked.length ? realPath(root, rel) : null;
+  return Boolean(target) && locked.some((p) => {
+    const real = realPath(root, p);
+    return real !== null && samePath(real, target);
+  });
 }
 
 const git = (root, args) => spawnSync('git', ['--no-optional-locks', '-c', 'core.quotePath=false', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, timeout: 10000 });

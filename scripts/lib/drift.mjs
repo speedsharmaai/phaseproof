@@ -93,6 +93,7 @@ export function recordReview(root, file) {
 const inGit = (root) => git(root, ['rev-parse', '--is-inside-work-tree']).stdout?.trim() === 'true';
 
 export function reviewDrift(root, phase, approval, reviewText) {
+  const unknown = (why) => ({ changed: [], fresh: [], unknown: why });
   const skip = (why) => ({ changed: [], fresh: [], warning: `code changes made after the code review were not compared: ${why}` });
   if (!baseOf(approval)) return inGit(root) ? skip('the phase was approved before the repository had a commit') : { changed: [], fresh: [] };
   const record = readJson(reviewRecordFile(root, phase), null);
@@ -100,6 +101,6 @@ export function reviewDrift(root, phase, approval, reviewText) {
   if (record.review !== sha256(reviewText)) return skip('the review file is not the one that was recorded. It was changed some other way than the Write or Edit tool');
   if (!isFingerprint(record.fingerprint)) return skip(typeof record.error === 'string' ? record.error : 'the record is damaged');
   const now = codeFingerprint(root, record.base);
-  if (!now) return skip('git could not list the code as it is now');
+  if (!now) return unknown('git could not list or read the code as it is now (an unreadable file, or a file name with a line break, can cause this)');
   return driftSince(record.fingerprint, now);
 }

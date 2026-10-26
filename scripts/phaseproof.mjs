@@ -198,6 +198,8 @@ const commands = {
     if (quick) notes.push(existingDocs && !parseVerdict(existingDocs).pass ? 'Approved as quick even though its docs review failed.' : 'Approved as quick: no docs review.');
     if (removalAllowance(root, phase)) notes.push(`The scope allows removing tests: ${removalAllowance(root, phase)}.`);
     if (locked.length) notes.push(`Locked tests, closed to edits until the gate: ${listed(locked)}.`);
+    const dropped = Object.keys(previous?.locked && typeof previous.locked === 'object' ? previous.locked : {}).filter((p) => !locked.includes(p));
+    if (dropped.length) notes.push(`No longer locked: ${listed(dropped)}.`);
     const { checks, docPaths } = loadConfig(root);
     notes.push(checks.length ? `The gate will run: ${checks.join(' ; ')}.` : 'No checks are configured, so the gate cannot pass until .phaseproof/config.json has some.');
     if (JSON.stringify(docPaths) !== JSON.stringify(DEFAULT_CONFIG.docPaths)) notes.push(`Always writable as docs: ${docPaths.filter(usableDocPath).join(', ') || 'Markdown files only'}.`);
@@ -227,6 +229,7 @@ const commands = {
     const docs = approval.size === 'quick' ? readText(reviewFile(root, phase, 'docs')) : requireReview(root, phase, 'docs');
     const code = requireReview(root, phase, 'code');
     const drift = reviewDrift(root, phase, approval, code);
+    if (drift.unknown) refuse(`code could not be compared with the code review: ${drift.unknown}. Fix that, or gitignore the file, and run the gate again`);
     if (drift.changed.length) {
       refuse(`code changed after the code review was saved: ${listed(drift.changed)}. Review the current code again. If a check, formatter or build wrote these files, commit or gitignore that output before the review`);
     }

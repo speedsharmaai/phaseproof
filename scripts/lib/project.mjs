@@ -24,9 +24,8 @@ export function toProjectPath(root, file) {
   return rel.split(sep).join('/');
 }
 
-const FOLDS_CASE = process.platform === 'darwin' || process.platform === 'win32';
 const nfc = (s) => s.normalize('NFC');
-export const samePath = (a, b, folds = FOLDS_CASE) => (folds ? nfc(a).toLowerCase() === nfc(b).toLowerCase() : nfc(a) === nfc(b));
+export const samePath = (a, b) => nfc(a).toLowerCase() === nfc(b).toLowerCase();
 
 export function linkedPath(root, rel) {
   const parts = rel.split('/');

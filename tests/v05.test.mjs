@@ -292,9 +292,9 @@ test('approve refuses absolute, backslashed, symlinked and wrongly cased locked 
   assert.equal(write(root, 'tests/otp.test.js').allow, false);
 });
 
-test('locked paths match without regard to case where the file system folds case', () => {
-  assert.equal(samePath('Tests/OTP.test.js', 'tests/otp.test.js', true), true);
-  assert.equal(samePath('Tests/OTP.test.js', 'tests/otp.test.js', false), false);
+test('locked paths match without regard to case on every system', () => {
+  assert.equal(samePath('Tests/OTP.test.js', 'tests/otp.test.js'), true);
+  assert.equal(samePath('tests/a.test.js', 'tests/b.test.js'), false);
 });
 
 test('approve shows the checks it binds, and odd doc paths', (t) => {
@@ -351,7 +351,7 @@ test('a repository with no commits at approval says the review was not compared'
 });
 
 test('locked paths written in another Unicode form still match', () => {
-  assert.equal(samePath('tests/café.test.js', 'tests/café.test.js', false), true);
+  assert.equal(samePath('tests/café.test.js', 'tests/café.test.js'), true);
 });
 
 test('before approval only new tests can be written as locked tests, in any spelling', (t) => {
@@ -359,8 +359,8 @@ test('before approval only new tests can be written as locked tests, in any spel
   put(root, 'tests/old.test.js', 'test("old", () => { expect(1).toBe(1); });\n');
   git(root, 'add', '-A');
   git(root, 'commit', '-qm', 'old test');
-  assert.match(write(root, 'tests/old.test.js').reason, /already committed/);
-  if (process.platform !== 'linux') assert.equal(write(root, 'Tests/old.test.js').allow, false);
+  assert.match(write(root, 'tests/old.test.js').reason, /not approved/);
+  assert.equal(write(root, 'Tests/OLD.test.js').allow, false);
   assert.equal(write(root, 'tests/new.test.js').allow, true);
   put(root, 'tests/new.test.js', 'test("new", () => {});\n');
   assert.equal(write(root, 'tests/new.test.js').allow, true);
@@ -372,7 +372,7 @@ test('in a subfolder project or a repo without commits, new locked tests can be 
   git(join(sub, '..', '..'), 'add', '-A');
   git(join(sub, '..', '..'), 'commit', '-qm', 'app test');
   assert.equal(write(sub, 'tests/new.test.js').allow, true);
-  assert.match(write(sub, 'src/app.test.js').reason, /already committed/);
+  assert.match(write(sub, 'src/app.test.js').reason, /not approved/);
   const fresh = tempProject(t);
   git(fresh, 'init', '-q');
   cli(fresh, 'init');
@@ -405,4 +405,50 @@ test('a tracked file that only starts to differ after the review refuses the gat
   saveReview(root);
   put(root, 'src/other.js', 'export const o = 2;\n');
   assert.match(cli(root, 'gate').err, /code changed after the code review was saved: src\/other\.js\./);
+});
+
+test('a committed test under the doc paths stays writable as a doc before approval', (t) => {
+  const root = project(t, `${SCOPE}\n**Locked tests:** docs/spec.test.js\n`);
+  put(root, 'docs/spec.test.js', 'test("spec", () => {});\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'spec');
+  assert.equal(write(root, 'docs/spec.test.js').allow, true);
+});
+
+test('outside git only new locked tests can be written; a broken HEAD keeps them closed', (t) => {
+  const plain = tempProject(t);
+  cli(plain, 'init');
+  put(plain, 'phases/phase-01-otp/scope.md', `${SCOPE}\n**Locked tests:** tests/a.test.js, tests/b.test.js\n`);
+  put(plain, 'tests/a.test.js', 'x');
+  assert.equal(write(plain, 'tests/a.test.js').allow, false);
+  assert.equal(write(plain, 'tests/b.test.js').allow, true);
+  const root = project(t, `${SCOPE}\n**Locked tests:** tests/new.test.js\n`);
+  const ref = git(root, 'symbolic-ref', 'HEAD').stdout.trim();
+  writeFileSync(join(root, '.git', ...ref.split('/')), `${'d'.repeat(40)}\n`);
+  assert.equal(write(root, 'tests/new.test.js').allow, false);
+});
+
+test('a symlink to a locked test is closed too', { skip: process.platform === 'win32' }, (t) => {
+  const root = project(t, LOCKED);
+  put(root, 'tests/otp.test.js', 'test("otp", () => {});\n');
+  cli(root, 'approve');
+  symlinkSync(join(root, 'tests'), join(root, 'alias'));
+  assert.match(write(root, 'alias/otp.test.js').reason, /locked test of phase 01/);
+});
+
+test('re-approving without a locked test says which locks were dropped', (t) => {
+  const root = project(t, LOCKED);
+  put(root, 'tests/otp.test.js', 'test("otp", () => {});\n');
+  cli(root, 'approve');
+  put(root, 'phases/phase-01-otp/scope.md', SCOPE);
+  assert.match(cli(root, 'approve', '--quick').out, /No longer locked: tests\/otp\.test\.js\./);
+});
+
+test('a recorded review with code that cannot be read now refuses the gate', { skip: process.platform === 'win32' }, (t) => {
+  const root = project(t);
+  cli(root, 'approve');
+  put(root, 'src/app.js', 'export const app = 2;\n');
+  saveReview(root);
+  put(root, 'src/odd\nname.js', 'x');
+  assert.match(cli(root, 'gate').err, /code could not be compared with the code review: git could not list or read the code/);
 });
