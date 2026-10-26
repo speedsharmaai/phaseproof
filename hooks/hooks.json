@@ -25,7 +25,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/post.mjs"
             ],
-            "timeout": 30
+            "timeout": 60
           }
         ]
       },

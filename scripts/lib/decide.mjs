@@ -1,5 +1,20 @@
 import { existsSync } from 'node:fs';
-import { approvalFile, blockFile, configChanged, gateFile, isActive, loadConfig, loadState, lockedTests, readJson, scopeChanged, toProjectPath } from './project.mjs';
+import {
+  approvalFile,
+  blockFile,
+  changedLocked,
+  configChanged,
+  gateFile,
+  isActive,
+  linkedPath,
+  loadConfig,
+  loadState,
+  lockedTests,
+  readJson,
+  samePath,
+  scopeChanged,
+  toProjectPath,
+} from './project.mjs';
 import { isTestFile } from './tests-guard.mjs';
 
 export { toProjectPath };
@@ -12,8 +27,10 @@ const WRITABLE_STATE = ['.phaseproof/reviews/', '.phaseproof/config.json'];
 const allow = { allow: true };
 const deny = (reason) => ({ allow: false, reason: `phaseproof: ${reason}` });
 
+const usableDocPath = (p) => typeof p === 'string' && p.replace(/^[./\\\s]+$/, '') !== '';
+
 export const isDoc = (rel, docPaths) =>
-  rel.toLowerCase().endsWith('.md') || docPaths.some((p) => rel === p.replace(/\/$/, '') || rel.startsWith(p));
+  rel.toLowerCase().endsWith('.md') || docPaths.filter(usableDocPath).some((p) => rel === p.replace(/\/$/, '') || rel.startsWith(p));
 
 export function decide({ root, toolName, toolInput = {} }) {
   if (!isActive(root)) return allow;
@@ -36,22 +53,26 @@ export function decide({ root, toolName, toolInput = {} }) {
     return deny(`${rel} is written by the phaseproof script, not by hand.`);
   }
 
-  if (isDoc(rel, loadConfig(root).docPaths)) return allow;
-
   const locked = lockedReason(root, rel);
   if (locked !== undefined) return locked ? deny(locked) : allow;
+
+  if (isDoc(rel, loadConfig(root).docPaths)) return allow;
 
   const reason = closedReason(root);
   return reason ? deny(reason) : allow;
 }
 
+const listsPath = (root, paths, rel) => paths.some((p) => samePath(toProjectPath(root, p) ?? '', rel));
+
 function lockedReason(root, rel) {
   const phase = loadState(root)?.phase;
-  if (!phase || !lockedTests(root, phase).some((p) => toProjectPath(root, p) === rel)) return undefined;
-  if (existsSync(approvalFile(root, phase))) {
+  if (!phase || !listsPath(root, lockedTests(root, phase), rel)) return undefined;
+  const approval = readJson(approvalFile(root, phase), null);
+  if (approval && listsPath(root, Object.keys(approval.locked ?? {}), rel)) {
     return `${rel} is a locked test of phase ${phase}: it was approved with the scope and stays as it is while the phase builds. If it is wrong, stop and tell the owner; they edit it themselves, or take it off **Locked tests:** and re-approve.`;
   }
-  return isTestFile(rel) ? null : `${rel} is listed under **Locked tests:** but is not a test file, so it stays closed until phase ${phase} is approved.`;
+  const planning = !approval || scopeChanged(root, phase);
+  return planning && isTestFile(rel) && !linkedPath(root, rel) ? null : undefined;
 }
 
 export function closedReason(root) {
@@ -65,7 +86,11 @@ export function closedReason(root) {
   }
   if (scopeChanged(root, phase)) {
     const quick = readJson(approvalFile(root, phase), {}).size === 'quick';
-    return `phase ${phase} scope changed after it was approved. ${quick ? `The owner runs /phaseproof:approve ${phase} --quick again, or reviews the docs first for a full approval.` : `Get the docs reviewed again, then the owner runs /phaseproof:approve ${phase}.`}`;
+    const locked = changedLocked(root, phase);
+    const what = locked.length
+      ? `locked test ${locked.join(', ')} changed after phase ${phase} was approved. Restore it if that was not meant to happen.`
+      : `phase ${phase} scope changed after it was approved.`;
+    return `${what} ${quick ? `The owner runs /phaseproof:approve ${phase} --quick again, or reviews the docs first for a full approval.` : `Get the docs reviewed again, then the owner runs /phaseproof:approve ${phase}.`}`;
   }
   if (configChanged(root, phase)) {
     return `the checks or doc paths in .phaseproof/config.json changed after phase ${phase} was approved. The owner looks at the change and runs /phaseproof:approve ${phase} again.`;

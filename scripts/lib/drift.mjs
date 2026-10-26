@@ -31,7 +31,7 @@ function contentHashes(root, paths) {
   }
   if (!regular.length) return out;
   if (regular.some((p) => p.includes('\n'))) return null;
-  const r = git(root, ['hash-object', '--no-filters', '--stdin-paths'], `${regular.join('\n')}\n`);
+  const r = git(root, ['hash-object', '--no-filters', '--stdin-paths'], `${regular.map((p) => join(root, p)).join('\n')}\n`);
   const oids = r.status === 0 ? r.stdout.trim().split('\n') : [];
   if (oids.length !== regular.length) return null;
   regular.forEach((p, i) => {
@@ -65,7 +65,7 @@ export function driftSince(before, now) {
     const was = kind(before, p);
     const is = kind(now, p);
     if (was && is && value(before, p) === value(now, p)) continue;
-    (was === 'tracked' || is === 'tracked' ? changed : fresh).push(p);
+    (was || is === 'tracked' ? changed : fresh).push(p);
   }
   return { changed, fresh };
 }
@@ -82,19 +82,21 @@ export function recordReview(root, file) {
   const text = readText(reviewFile(root, phase, 'code'));
   const base = baseOf(readJson(approvalFile(root, phase), null));
   if (!text || !base) return false;
+  const review = sha256(text);
   const fingerprint = codeFingerprint(root, base);
-  if (!fingerprint) return false;
-  writeJson(reviewRecordFile(root, phase), { phase, recordedAt: new Date().toISOString(), base, review: sha256(text), fingerprint });
-  return true;
+  const record = { phase, recordedAt: new Date().toISOString(), base, review };
+  writeJson(reviewRecordFile(root, phase), fingerprint ? { ...record, fingerprint } : { ...record, error: `git could not list the code that differs from the approval's base ${base.slice(0, 12)}` });
+  return Boolean(fingerprint);
 }
 
 export function reviewDrift(root, phase, approval, reviewText) {
   if (!baseOf(approval)) return { changed: [], fresh: [] };
   const record = readJson(reviewRecordFile(root, phase), null);
-  if (!record || record.review !== sha256(reviewText) || !isFingerprint(record.fingerprint)) {
-    return { changed: [], fresh: [], warning: 'the code review was not fingerprinted when it was saved (save it with the Write tool), so code changes made after the review were not compared' };
-  }
+  const skip = (why) => ({ changed: [], fresh: [], warning: `code changes made after the code review were not compared: ${why}` });
+  if (!record) return skip('there is no record of the code it saw. The record is made when the review is saved with the Write or Edit tool; a review saved another way, or a git call that timed out, leaves none');
+  if (record.review !== sha256(reviewText)) return skip('the review file is not the one that was recorded. It was changed some other way than the Write or Edit tool');
+  if (!isFingerprint(record.fingerprint)) return skip(typeof record.error === 'string' ? record.error : 'the record is damaged');
   const now = codeFingerprint(root, record.base);
-  if (!now) return { changed: [], fresh: [], warning: 'code changes made after the review were not compared: git could not list them' };
+  if (!now) return skip('git could not list the code as it is now');
   return driftSince(record.fingerprint, now);
 }

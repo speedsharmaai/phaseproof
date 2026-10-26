@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -22,6 +22,33 @@ export function toProjectPath(root, file) {
   const rel = relative(resolve(root), resolve(root, file));
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
   return rel.split(sep).join('/');
+}
+
+const FOLDS_CASE = process.platform === 'darwin' || process.platform === 'win32';
+export const samePath = (a, b, folds = FOLDS_CASE) => (folds ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+export function linkedPath(root, rel) {
+  const parts = rel.split('/');
+  for (let i = 1; i <= parts.length; i++) {
+    try {
+      if (lstatSync(join(root, ...parts.slice(0, i))).isSymbolicLink()) return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+export function exactCase(root, rel) {
+  const parts = rel.split('/');
+  for (let i = 0; i < parts.length; i++) {
+    try {
+      if (!readdirSync(join(root, ...parts.slice(0, i))).includes(parts[i])) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 export const isActive = (root) => Boolean(root) && existsSync(ppPath(root, 'state.json'));
 
@@ -129,21 +156,31 @@ export function scopeText(root, phase) {
 
 export const lockedTests = (root, phase) => [...new Set(scopeList(scopeText(root, phase), 'Locked tests'))].sort();
 
-function fileDigest(root, path) {
+export function lockedDigest(root, path) {
   const rel = toProjectPath(root, path);
   if (!rel) return 'outside';
   try {
-    return sha256(readFileSync(join(root, rel)));
+    return sha256(readFileSync(join(root, rel), 'utf8').replace(/\r\n/g, '\n'));
   } catch {
     return 'missing';
   }
+}
+
+export const lockedDigests = (root, phase) => Object.fromEntries(lockedTests(root, phase).map((p) => [p, lockedDigest(root, p)]));
+
+export function changedLocked(root, phase) {
+  const locked = readJson(approvalFile(root, phase), null)?.locked;
+  if (!locked || typeof locked !== 'object') return [];
+  return Object.keys(locked)
+    .filter((p) => locked[p] !== lockedDigest(root, p))
+    .sort();
 }
 
 export function scopeHash(root, phase) {
   const dir = phaseDir(root, phase);
   if (!dir) return null;
   const parts = SCOPE_FILES.map((name) => `${name}\n${readText(join(dir, name)) ?? ''}`);
-  for (const path of lockedTests(root, phase)) parts.push(`locked ${path}\n${fileDigest(root, path)}`);
+  for (const path of lockedTests(root, phase)) parts.push(`locked ${path}\n${lockedDigest(root, path)}`);
   return sha256(parts.join('\n---\n'));
 }
 
