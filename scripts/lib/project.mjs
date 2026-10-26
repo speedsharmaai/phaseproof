@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
@@ -17,6 +17,39 @@ export function padPhase(id) {
 }
 
 export const ppPath = (root, ...parts) => join(root, DIR, ...parts);
+
+export function toProjectPath(root, file) {
+  const rel = relative(resolve(root), resolve(root, file));
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
+  return rel.split(sep).join('/');
+}
+
+const nfc = (s) => s.normalize('NFC');
+export const samePath = (a, b) => nfc(a).toLowerCase() === nfc(b).toLowerCase();
+
+export function linkedPath(root, rel) {
+  const parts = rel.split('/');
+  for (let i = 1; i <= parts.length; i++) {
+    try {
+      if (lstatSync(join(root, ...parts.slice(0, i))).isSymbolicLink()) return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+export function exactCase(root, rel) {
+  const parts = rel.split('/');
+  for (let i = 0; i < parts.length; i++) {
+    try {
+      if (!readdirSync(join(root, ...parts.slice(0, i))).some((name) => nfc(name) === nfc(parts[i]))) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
 export const isActive = (root) => Boolean(root) && existsSync(ppPath(root, 'state.json'));
 
 export function readJson(file, fallback) {
@@ -40,7 +73,13 @@ export function readText(file) {
   }
 }
 
-export const loadConfig = (root) => ({ ...DEFAULT_CONFIG, ...readJson(ppPath(root, 'config.json'), {}) });
+const strings = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+
+export function loadConfig(root) {
+  const raw = readJson(ppPath(root, 'config.json'), {});
+  const config = { ...DEFAULT_CONFIG, ...(raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) };
+  return { ...config, checks: strings(config.checks) ? config.checks : [], docPaths: strings(config.docPaths) ? config.docPaths : DEFAULT_CONFIG.docPaths };
+}
 export const loadState = (root) => readJson(ppPath(root, 'state.json'), null);
 
 const isDir = (path) => {
@@ -116,16 +155,49 @@ export const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 
 const SCOPE_FILES = ['scope.md', 'tasks.md', 'screens.md'];
 
+export function scopeText(root, phase) {
+  const dir = phaseDir(root, phase);
+  return (dir && readText(join(dir, 'scope.md'))) ?? '';
+}
+
+export const lockedTests = (root, phase) => [...new Set(scopeList(scopeText(root, phase), 'Locked tests'))].sort();
+
+export function lockedDigest(root, path) {
+  const rel = toProjectPath(root, path);
+  if (!rel) return 'outside';
+  try {
+    return sha256(readFileSync(join(root, rel), 'utf8').replace(/\r\n/g, '\n'));
+  } catch {
+    return 'missing';
+  }
+}
+
+export const lockedDigests = (root, phase) => Object.fromEntries(lockedTests(root, phase).map((p) => [p, lockedDigest(root, p)]));
+
+export function changedLocked(root, phase) {
+  const locked = readJson(approvalFile(root, phase), null)?.locked;
+  if (!locked || typeof locked !== 'object') return [];
+  return Object.keys(locked)
+    .filter((p) => locked[p] !== lockedDigest(root, p))
+    .sort();
+}
+
 export function scopeHash(root, phase) {
   const dir = phaseDir(root, phase);
   if (!dir) return null;
   const parts = SCOPE_FILES.map((name) => `${name}\n${readText(join(dir, name)) ?? ''}`);
+  for (const path of lockedTests(root, phase)) parts.push(`locked ${path}\n${lockedDigest(root, path)}`);
   return sha256(parts.join('\n---\n'));
 }
 
-export function scopeText(root, phase) {
-  const dir = phaseDir(root, phase);
-  return (dir && readText(join(dir, 'scope.md'))) ?? '';
+export function configHash(root) {
+  const { checks, docPaths } = loadConfig(root);
+  return sha256(JSON.stringify({ checks, docPaths }));
+}
+
+export function configChanged(root, phase) {
+  const approval = readJson(approvalFile(root, phase), null);
+  return Boolean(approval?.configHash) && approval.configHash !== configHash(root);
 }
 
 export function scopeChanged(root, phase) {

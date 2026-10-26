@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0 - 2026-10-26
+
+- Locked tests: acceptance tests listed under `**Locked tests:**` in scope.md can be written while the phase is planned, are reviewed with the docs, and are closed to edits once the owner approves. Their contents are part of the approved scope, so changing or deleting them by any route closes code and the gate until the owner approves again, and the message names the file
+- The gate refuses when the check commands or doc paths in `.phaseproof/config.json` changed after approval, and `approve` prints the commands it binds. Before, a builder could replace the test command and the gate would re-run that instead. What a command runs (an npm script, runner config) is not bound
+- The gate refuses when reviewed code changed after the code review was saved, and names the files. Untracked files that only appear afterwards warn. The record is made when the review is saved with the Write or Edit tool
+- Empty doc paths in config.json no longer make every file a doc
+- Locked paths are matched without regard to case or Unicode form on every system, and through symlinks; `approve` names locks dropped since the previous approval
+- If the review was recorded but the code cannot be read now (or git times out), the gate refuses and says why; files hidden with assume-unchanged or skip-worktree get a warning
+- The gate record has a new `warnings` field with every warning; `testWarnings` keeps only the test guard's
+- Approvals made before 0.5 have no config hash and are not checked against config changes
+- The code reviewer reports each "Done when" criterion as verified or not, with the evidence, and treats code that special-cases locked tests as a blocker
+- The doc reviewer checks that locked tests test what "Done when" promises
+
 ## 0.4.0 - 2026-10-20
 
 - `/phaseproof:quick` for small changes: the owner approves with `approve --quick`, which skips the docs review; one code review and the gate still apply. Nothing in scope.md can make a phase quick

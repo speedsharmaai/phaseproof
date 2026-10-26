@@ -1,15 +1,24 @@
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, rmSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { allPassed, runChecks } from './lib/checks.mjs';
+import { reviewDrift } from './lib/drift.mjs';
 import { isMain } from './lib/main.mjs';
 import {
   approvalFile,
   blockFile,
+  changedLocked,
+  DEFAULT_CONFIG,
+  configChanged,
+  configHash,
   gateFile,
   gitHead,
+  exactCase,
   isActive,
+  linkedPath,
   loadConfig,
   loadState,
+  lockedDigests,
+  lockedTests,
   padPhase,
   phaseDir,
   phaseDirs,
@@ -23,10 +32,12 @@ import {
   scopeList,
   scopeText,
   sha256,
+  toProjectPath,
   writeJson,
 } from './lib/project.mjs';
 import { parseVerdict } from './lib/verdict.mjs';
-import { testTampering } from './lib/tests-guard.mjs';
+import { usableDocPath } from './lib/decide.mjs';
+import { isTestFile, testTampering } from './lib/tests-guard.mjs';
 
 const USAGE = `usage: phaseproof <command>
 
@@ -54,6 +65,30 @@ function requireOneFolder(root, phase) {
 const removalAllowance = (root, phase) => scopeList(scopeText(root, phase), 'Removes tests').join(', ');
 
 const MAX_WARNINGS = 50;
+
+const isRegularFile = (path) => {
+  try {
+    return lstatSync(path).isFile();
+  } catch {
+    return false;
+  }
+};
+
+function requireLockable(root, phase) {
+  const locked = lockedTests(root, phase);
+  for (const path of locked) {
+    if (isAbsolute(path) || path.includes('\\')) refuse(`locked test ${path}: write it as a path relative to the project folder, with forward slashes.`);
+    const rel = toProjectPath(root, path);
+    if (!rel || rel === '.phaseproof' || rel.startsWith('.phaseproof/')) refuse(`locked test ${path} is outside the project. List paths relative to the project folder.`);
+    if (linkedPath(root, rel)) refuse(`locked test ${path} is or sits under a symlink. Lock the real file.`);
+    if (!isRegularFile(join(root, rel))) refuse(`locked test ${path} does not exist yet, or is not a file. Write it before approval, or take it off **Locked tests:**.`);
+    if (!exactCase(root, rel)) refuse(`locked test ${path} differs in upper and lower case from the file on disk. Use the exact name.`);
+    if (!isTestFile(rel)) refuse(`locked test ${path} does not look like a test file. Only tests can be locked.`);
+  }
+  return locked;
+}
+
+const listed = (paths, max = 10) => `${paths.slice(0, max).join(', ')}${paths.length > max ? ` and ${paths.length - max} more` : ''}`;
 
 function testWarnings(root, phase, approval) {
   try {
@@ -124,11 +159,13 @@ const commands = {
     const lines = [
       `phase ${phase}${dir ? ` (${dir.split(/[\\/]/).pop()})` : ' (no phase folder yet)'}${size === 'quick' ? ', approved as quick' : ''}`,
       `  docs review  ${docs.pass ? 'pass' : size === 'quick' ? `skipped, the owner approved it as quick (${docs.reason})` : docs.reason}`,
-      `  approved     ${approved ? (scopeChanged(root, phase) ? 'stale, scope changed since approval' : 'yes') : 'no'}`,
+      `  approved     ${approved ? (scopeChanged(root, phase) ? 'stale, scope changed since approval' : configChanged(root, phase) ? 'stale, checks or doc paths changed since approval' : 'yes') : 'no'}`,
       `  checks       ${run ? (allPassed(run.results) ? 'pass' : 'failing') : 'not run'}`,
       `  code review  ${code.pass ? 'pass' : code.reason}`,
       `  gate         ${existsSync(gateFile(root, phase)) ? 'passed' : 'open'}`,
     ];
+    const locked = lockedTests(root, phase);
+    if (locked.length) lines.push(`  locked tests ${listed(locked, 5)}`);
     if (block) lines.push(`  BLOCKED      ${block.reason}, waiting on the owner`);
     out(lines.join('\n'));
   },
@@ -147,18 +184,25 @@ const commands = {
     const docsText = quick ? existingDocs : requireReview(root, phase, 'docs');
     const docs = docsText ? sha256(docsText) : null;
     if (existsSync(join(dir, 'screens.md'))) requireReview(root, phase, 'design');
+    const locked = requireLockable(root, phase);
     const scope = scopeHash(root, phase);
     if (!quick && previous?.scopeHash && previous.scopeHash !== scope && previous.docsReview === docs) {
       refuse(`phase ${phase} scope changed since the last approval. Get a fresh docs review first.`);
     }
     const head = gitHead(root);
     const base = args.includes('--new-base') ? head : (previous?.base ?? previous?.head ?? head);
-    writeJson(approvalFile(root, phase), { phase, approvedAt: new Date().toISOString(), head, base, size: quick ? 'quick' : 'full', scopeHash: scope, docsReview: docs });
+    writeJson(approvalFile(root, phase), { phase, approvedAt: new Date().toISOString(), head, base, size: quick ? 'quick' : 'full', scopeHash: scope, docsReview: docs, configHash: configHash(root), locked: lockedDigests(root, phase) });
     const unblocked = existsSync(blockFile(root, phase));
     if (unblocked) rmSync(blockFile(root, phase));
     const notes = [];
     if (quick) notes.push(existingDocs && !parseVerdict(existingDocs).pass ? 'Approved as quick even though its docs review failed.' : 'Approved as quick: no docs review.');
     if (removalAllowance(root, phase)) notes.push(`The scope allows removing tests: ${removalAllowance(root, phase)}.`);
+    if (locked.length) notes.push(`Locked tests, closed to edits until the gate: ${listed(locked)}.`);
+    const dropped = Object.keys(previous?.locked && typeof previous.locked === 'object' ? previous.locked : {}).filter((p) => !locked.includes(p));
+    if (dropped.length) notes.push(`No longer locked: ${listed(dropped)}.`);
+    const { checks, docPaths } = loadConfig(root);
+    notes.push(checks.length ? `The gate will run: ${checks.join(' ; ')}.` : 'No checks are configured, so the gate cannot pass until .phaseproof/config.json has some.');
+    if (JSON.stringify(docPaths) !== JSON.stringify(DEFAULT_CONFIG.docPaths)) notes.push(`Always writable as docs: ${docPaths.filter(usableDocPath).join(', ') || 'Markdown files only'}.`);
     out(`phase ${phase} approved. Code is open for this phase.${unblocked ? ' Block cleared.' : ''}${notes.length ? ` ${notes.join(' ')}` : ''}`);
   },
 
@@ -176,11 +220,26 @@ const commands = {
     if (!existsSync(approvalFile(root, phase))) refuse(`phase ${phase} was never approved`);
     requireOneFolder(root, phase);
     if (existsSync(blockFile(root, phase))) refuse(`phase ${phase} is blocked. The owner has to approve it again first`);
-    if (scopeChanged(root, phase)) refuse(`phase ${phase} scope changed since approval. Review it and approve again`);
+    if (scopeChanged(root, phase)) {
+      const locked = changedLocked(root, phase);
+      refuse(locked.length ? `locked test ${listed(locked)} changed since phase ${phase} was approved. The owner restores it, or approves again` : `phase ${phase} scope changed since approval (scope.md, tasks.md, screens.md or the list of locked tests). Review it and approve again`);
+    }
+    if (configChanged(root, phase)) refuse(`the checks or doc paths in .phaseproof/config.json changed since phase ${phase} was approved. The owner approves again`);
     const approval = (readJson(approvalFile(root, phase), {}) ?? {});
     const docs = approval.size === 'quick' ? readText(reviewFile(root, phase, 'docs')) : requireReview(root, phase, 'docs');
     const code = requireReview(root, phase, 'code');
-    const warnings = testWarnings(root, phase, approval);
+    const drift = reviewDrift(root, phase, approval, code);
+    if (drift.unknown) refuse(`code could not be compared with the code review: ${drift.unknown}`);
+    if (drift.changed.length) {
+      refuse(`code changed after the code review was saved: ${listed(drift.changed)}. Review the current code again. If a check, formatter or build wrote these files, commit or gitignore that output before the review`);
+    }
+    const tests = testWarnings(root, phase, approval);
+    const warnings = [
+      ...(drift.warning ? [drift.warning] : []),
+      ...drift.fresh.slice(0, 10).map((f) => `untracked file that appeared after the code review: ${f}`),
+      ...(drift.fresh.length > 10 ? [`and ${drift.fresh.length - 10} more untracked files that appeared after the code review`] : []),
+      ...tests,
+    ];
     const results = checkResults(root, phase);
     out(describe(results));
     if (warnings.length) out(`check before trusting this gate (warnings, the gate does not block on them):\n  ${warnings.join('\n  ')}`);
@@ -191,7 +250,8 @@ const commands = {
       head: gitHead(root),
       checks: results.map(({ cmd, code: c, ms }) => ({ cmd, code: c, ms })),
       reviews: { docs: docs ? sha256(docs) : null, code: sha256(code) },
-      testWarnings: warnings,
+      warnings,
+      testWarnings: tests,
     });
     out(`phase ${phase} gate: PASS`);
   },

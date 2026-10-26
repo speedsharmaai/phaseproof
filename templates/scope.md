@@ -16,6 +16,8 @@
 
 **Removes tests:** none
 
+**Locked tests:** none
+
 ## Decisions
 
 - <choices made for this phase, or links to ADRs>

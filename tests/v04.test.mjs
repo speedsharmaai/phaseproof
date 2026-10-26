@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, renameSync, rmSync, symlinkSync } from 'node:fs';
 import { decide } from '../scripts/lib/decide.mjs';
+import { recordReview } from '../scripts/lib/drift.mjs';
 import { join } from 'node:path';
 import { approvalFile, gateFile, readJson, scopeField, scopeList } from '../scripts/lib/project.mjs';
 import { isSkipLine, isTestFile, TEST_GLOBS, testTampering } from '../scripts/lib/tests-guard.mjs';
@@ -26,7 +27,7 @@ function project(t, dir = '') {
   git(top, 'commit', '-qm', 'init');
   return root;
 }
-const passCode = (root) => put(root, '.phaseproof/reviews/phase-01-code.md', PASS);
+const passCode = (root) => recordReview(root, put(root, '.phaseproof/reviews/phase-01-code.md', PASS));
 
 test('only the owner makes a phase quick, with approve --quick', (t) => {
   const root = project(t);
@@ -86,9 +87,9 @@ test('approve rejects unknown options and second folders; files do not count as 
 test('deleted tests and new skips warn at the gate but never block it', (t) => {
   const root = project(t);
   cli(root, 'approve', '--quick');
-  passCode(root);
   rmSync(join(root, 'src/b.test.js'));
   put(root, 'src/a.test.js', 'test.skip("a", () => { expect(1).toBe(1); });\n');
+  passCode(root);
   const r = cli(root, 'gate');
   assert.equal(r.code, 0, r.err);
   assert.match(r.out, /check before trusting this gate \(warnings, the gate does not block on them\):/);
@@ -286,11 +287,11 @@ test('an unstaged rename of a file with an old skip reports nothing', (t) => {
 test('several Removes tests lines and bullet lists all count', (t) => {
   const root = project(t);
   cli(root, 'approve', '--quick');
-  passCode(root);
   rmSync(join(root, 'src/a.test.js'));
   rmSync(join(root, 'src/b.test.js'));
   put(root, 'phases/phase-01-typo/scope.md', `${SCOPE}\n**Removes tests:** none\n\n**Removes tests:**\n- src/a.test.js\n- \`src/b.test.js\`\n`);
   cli(root, 'approve', '--quick');
+  passCode(root);
   const r = cli(root, 'gate');
   assert.equal(r.code, 0, r.err);
 });
@@ -441,8 +442,8 @@ test('more than 50 test warnings are capped', (t) => {
   git(root, 'add', '-A');
   git(root, 'commit', '-qm', 'many');
   cli(root, 'approve', '--quick', '--new-base');
-  passCode(root);
   for (let i = 0; i < 60; i++) rmSync(join(root, `tests/t${i}.test.js`));
+  passCode(root);
   const out = cli(root, 'gate').out;
   assert.match(out, /and 10 more/);
   assert.equal(readJson(gateFile(root, '01')).testWarnings.length, 51);
