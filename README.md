@@ -18,6 +18,18 @@ A phase is done when its "Done when" line is true on the running system, not whe
 /plugin install phaseproof@phaseproof
 ```
 
+Then, in your project:
+
+```
+/phaseproof:kickoff a habit tracker for runners    (or run it in an existing repo to adopt it)
+/phaseproof:phase 01 sign-in                       scope and tasks, checked by a reviewer
+/phaseproof:approve 01                             you sign off; Claude cannot
+/phaseproof:build                                  build, code review, gate
+/phaseproof:doctor                                 if anything seems off
+```
+
+**New in 0.5 to 0.7:** acceptance tests you lock with the plan that the agent cannot edit, check commands bound to your approval, a gate that refuses when code changed after the review, per-phase gate commands and change budgets, a one-time nudge before Claude finishes on red checks, and `doctor` and `report` commands. See the [changelog](CHANGELOG.md).
+
 ## Why
 
 Coding agents fail in the same few ways: they start writing code before anyone agreed what to build, they skip tests, they mark work done because it compiles, and they review their own work and like it.
