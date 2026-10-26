@@ -1,8 +1,11 @@
-import { existsSync, lstatSync, mkdirSync, rmSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { measure, overBudget } from './lib/budget.mjs';
 import { allPassed, runChecks } from './lib/checks.mjs';
 import { codeFingerprint, reviewDrift } from './lib/drift.mjs';
+import { lockIssues } from './lib/locks.mjs';
+import { doctor } from './lib/doctor.mjs';
+import { report } from './lib/report.mjs';
 import { isMain } from './lib/main.mjs';
 import {
   approvalFile,
@@ -13,10 +16,8 @@ import {
   configHash,
   gateFile,
   gitHead,
-  exactCase,
   gateRuns,
   isActive,
-  linkedPath,
   loadConfig,
   loadState,
   lockedDigests,
@@ -35,12 +36,11 @@ import {
   scopeList,
   scopeText,
   sha256,
-  toProjectPath,
   writeJson,
 } from './lib/project.mjs';
 import { parseVerdict } from './lib/verdict.mjs';
 import { usableDocPath } from './lib/decide.mjs';
-import { isTestFile, testTampering } from './lib/tests-guard.mjs';
+import { testTampering } from './lib/tests-guard.mjs';
 
 const USAGE = `usage: phaseproof <command>
 
@@ -52,7 +52,9 @@ const USAGE = `usage: phaseproof <command>
   check [phase]               run the configured checks and record the result
   gate <phase>                re-run checks, read the code review, close the phase
   block [phase]               stop the phase after a failed code review until the owner decides
-  next                        move to the next phase once the gate has passed`;
+  next                        move to the next phase once the gate has passed
+  doctor                      check the setup and say what to fix
+  report                      what the reviews and gates caught, phase by phase`;
 
 class Refusal extends Error {}
 const refuse = (msg) => {
@@ -69,26 +71,10 @@ const removalAllowance = (root, phase) => scopeList(scopeText(root, phase), 'Rem
 
 const MAX_WARNINGS = 50;
 
-const isRegularFile = (path) => {
-  try {
-    return lstatSync(path).isFile();
-  } catch {
-    return false;
-  }
-};
-
 function requireLockable(root, phase) {
-  const locked = lockedTests(root, phase);
-  for (const path of locked) {
-    if (isAbsolute(path) || path.includes('\\')) refuse(`locked test ${path}: write it as a path relative to the project folder, with forward slashes.`);
-    const rel = toProjectPath(root, path);
-    if (!rel || rel === '.phaseproof' || rel.startsWith('.phaseproof/')) refuse(`locked test ${path} is outside the project. List paths relative to the project folder.`);
-    if (linkedPath(root, rel)) refuse(`locked test ${path} is or sits under a symlink. Lock the real file.`);
-    if (!isRegularFile(join(root, rel))) refuse(`locked test ${path} does not exist yet, or is not a file. Write it before approval, or take it off **Locked tests:**.`);
-    if (!exactCase(root, rel)) refuse(`locked test ${path} differs in upper and lower case from the file on disk. Use the exact name.`);
-    if (!isTestFile(rel)) refuse(`locked test ${path} does not look like a test file. Only tests can be locked.`);
-  }
-  return locked;
+  const issues = lockIssues(root, phase);
+  if (issues.length) refuse(issues[0]);
+  return lockedTests(root, phase);
 }
 
 const listed = (paths, max = 10) => `${paths.slice(0, max).join(', ')}${paths.length > max ? ` and ${paths.length - max} more` : ''}`;
@@ -283,6 +269,18 @@ const commands = {
     if (v.pass || v.reason === 'no review report') refuse(`block is for a failed code review, and phase ${phase} has none`);
     writeJson(blockFile(root, phase), { phase, blockedAt: new Date().toISOString(), reason: v.reason, blockers: v.blockers.slice(0, 20) });
     out(`phase ${phase} blocked: ${v.reason}. Code is closed until the owner runs /phaseproof:approve ${phase}.`);
+  },
+
+  doctor(root, _args, out) {
+    const found = doctor(root);
+    out(found.map(({ level, text }) => `${level.padEnd(4)} ${text}`).join('\n'));
+    const failures = found.filter((f) => f.level === 'FAIL').length;
+    if (failures) refuse(`${failures} problem${failures === 1 ? '' : 's'} to fix`);
+  },
+
+  report(root, _args, out) {
+    requireActive(root);
+    out(report(root));
   },
 
   next(root, _args, out) {

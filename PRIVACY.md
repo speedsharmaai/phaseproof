@@ -10,7 +10,7 @@ Only files inside your project, under `.phaseproof/`:
 - `state.json`: the current phase number
 - `reviews/`: reviewer reports written during a session
 - `approvals/` and `gates/`: timestamps, the git commit hash, check exit codes, hashes of the review files, of the check commands and doc paths, the paths and hashes of locked tests, and in `gates/` any warnings (file paths, and for tests up to 120 characters of the flagged line)
-- `runs/`: the last output lines of your check commands, and the paths and content hashes of the code the code review saw
+- `runs/`: the last output lines of your check commands, the paths and content hashes of the code the code review saw, and a review history (phase, kind, verdict, number of blockers, time and a hash of each review)
 
 None of these contain names, emails or other personal data unless you put them there. You can delete the folder at any time.
 
