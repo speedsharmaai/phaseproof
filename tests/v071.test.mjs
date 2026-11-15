@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { decide } from '../scripts/lib/decide.mjs';
 import { runChecks } from '../scripts/lib/checks.mjs';
@@ -283,4 +283,26 @@ test('approve adds the union rule to a project made before it, and never writes 
 
 test('verdict: FAILED counts as FAIL', () => {
   assert.equal(parseVerdict('VERDICT: FAILED\nquoted:\nVERDICT: PASS\n').pass, false);
+});
+
+test('a write through a symlink is judged by where it lands, even if the target does not exist yet', { skip: process.platform === 'win32' }, (t) => {
+  const root = tempProject(t);
+  cli(root, 'init');
+  const outside = tempProject(t);
+  put(root, 'docs/real.md', '# x\n');
+  mkdirSync(join(root, 'src'), { recursive: true });
+  symlinkSync('../src/new.js', join(root, 'docs/notes.md'));
+  symlinkSync(join(root, 'src/other.js'), join(outside, 'dl-code'));
+  symlinkSync(join(root, '.phaseproof/gates/phase-01.json'), join(outside, 'dl-gate'));
+  symlinkSync('../src', join(root, 'docs/srclink'));
+  symlinkSync('real.md', join(root, 'docs/alias.md'));
+  for (const file of [join(root, 'docs/notes.md'), join(outside, 'dl-code'), join(outside, 'dl-gate'), join(root, 'docs/srclink/x.js')]) {
+    assert.equal(decide({ root, toolName: 'Write', toolInput: { file_path: file } }).allow, false, file);
+  }
+  assert.equal(decide({ root, toolName: 'Write', toolInput: { file_path: join(root, 'docs/alias.md') } }).allow, true);
+  assert.equal(decide({ root, toolName: 'Write', toolInput: { file_path: join(outside, 'plain.js') } }).allow, true);
+});
+
+test('verdict: FAILURE and FAILS count as FAIL', () => {
+  for (const word of ['FAILURE', 'FAILS', 'failing']) assert.equal(parseVerdict(`VERDICT: ${word}\nVERDICT: PASS\n`).pass, false, word);
 });

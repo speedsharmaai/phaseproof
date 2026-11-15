@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -31,6 +31,19 @@ function onDisk(path) {
 }
 
 const inside = (rel) => Boolean(rel) && !rel.startsWith('..') && !isAbsolute(rel);
+
+export function writeTarget(root, file) {
+  let abs = resolve(root, file);
+  for (let hop = 0; hop < 40; hop++) {
+    try {
+      if (!lstatSync(abs).isSymbolicLink()) break;
+      abs = resolve(onDisk(dirname(abs)), readlinkSync(abs));
+    } catch {
+      break;
+    }
+  }
+  return join(onDisk(dirname(abs)), basename(abs));
+}
 
 export function toProjectPath(root, file) {
   let rel = relative(resolve(root), resolve(root, file));

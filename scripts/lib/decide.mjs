@@ -18,6 +18,7 @@ import {
   samePath,
   scopeChanged,
   toProjectPath,
+  writeTarget,
 } from './project.mjs';
 import { isTestFile } from './tests-guard.mjs';
 
@@ -49,11 +50,12 @@ export function decide({ root, toolName, toolInput = {} }) {
   if (!FILE_TOOLS.has(toolName)) return allow;
   const file = toolInput.file_path ?? toolInput.notebook_path;
   if (!file) return allow;
-  const rel = toProjectPath(root, String(file));
+  const typed = toProjectPath(root, String(file));
+  const rel = toProjectPath(root, writeTarget(root, String(file)));
   if (!rel) return allow;
 
-  if (inStateDir(rel)) {
-    if (WRITABLE_STATE.some((p) => rel === p || rel.startsWith(p))) return allow;
+  if (inStateDir(rel) || (typed && inStateDir(typed))) {
+    if (typed === rel && WRITABLE_STATE.some((p) => rel === p || rel.startsWith(p))) return allow;
     return deny(`${rel} is written by the phaseproof script, not by hand.`);
   }
 
