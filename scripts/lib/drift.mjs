@@ -2,7 +2,7 @@ import { lstatSync, readlinkSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isDoc } from './decide.mjs';
-import { approvalFile, isActive, loadConfig, ppPath, readJson, readText, reviewFile, sha256, toProjectPath, writeJson } from './project.mjs';
+import { approvalFile, inStateDir, isActive, loadConfig, ppPath, readJson, readText, reviewFile, sha256, toProjectPath, writeJson } from './project.mjs';
 
 const TIMEOUT_MS = 20000;
 const git = (root, args, input) =>
@@ -14,7 +14,7 @@ const git = (root, args, input) =>
     timeout: TIMEOUT_MS,
   });
 const zlist = (r) => (r.status === 0 ? r.stdout.split('\0').filter(Boolean) : null);
-const isCode = (rel, docPaths) => rel !== '.phaseproof' && !rel.startsWith('.phaseproof/') && !isDoc(rel, docPaths);
+const isCode = (rel, docPaths) => !inStateDir(rel) && !isDoc(rel, docPaths);
 
 const timedOut = (r) => Boolean(r.error || r.signal);
 

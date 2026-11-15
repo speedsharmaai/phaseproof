@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { closedReason } from './lib/decide.mjs';
 import { isMain } from './lib/main.mjs';
-import { approvalFile, blockFile, gateFile, isActive, loadState, lockedTests, phaseDir, readJson, scopeField, scopeText } from './lib/project.mjs';
+import { approvalFile, blockFile, findRoot, gateFile, isActive, loadState, lockedTests, phaseDir, readJson, scopeField, scopeText } from './lib/project.mjs';
 
 const MAX = 1500;
 
@@ -44,7 +44,7 @@ export function context(root) {
 export function respond(raw, projectDir = process.env.CLAUDE_PROJECT_DIR) {
   try {
     const input = JSON.parse(raw);
-    const text = context(projectDir || input.cwd);
+    const text = context(findRoot(projectDir || input.cwd));
     return text ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } }) : '';
   } catch {
     return '';

@@ -3,14 +3,14 @@ import { isMain } from './lib/main.mjs';
 import { recordReview } from './lib/drift.mjs';
 import { recordHistory } from './lib/history.mjs';
 import { describeViolation, ownerNotice, verify } from './lib/shell.mjs';
-import { isActive } from './lib/project.mjs';
+import { findRoot, isActive } from './lib/project.mjs';
 
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit']);
 
 export function respond(raw, projectDir = process.env.CLAUDE_PROJECT_DIR) {
   try {
     const input = JSON.parse(raw);
-    const root = projectDir || input.cwd;
+    const root = findRoot(projectDir || input.cwd);
     if (FILE_TOOLS.has(input.tool_name)) {
       recordReview(root, input.tool_input?.file_path);
       recordHistory(root, input.tool_input?.file_path);

@@ -25,8 +25,9 @@ If the project already has code but no phaseproof docs, adopt it instead of temp
    - `WORKLIST.md` from `WORKLIST.md`
    - `phases/README.md` from `phases-README.md`, with an honest kill line
    - `docs/decisions/0001-<stack>.md` from `adr.md`
-4. Turn the gate on, passing every check command:
+4. If the folder is not a git repository, or has no commit yet, ask the owner to run `git init` and make a first commit (or do it with their go-ahead). Without one the shell guard, the test comparison, the budget and the "code changed after review" check are off.
+5. Turn the gate on, passing every check command:
    `node "${CLAUDE_PLUGIN_ROOT}/scripts/phaseproof.mjs" init --check "<cmd>" --check "<cmd>"` (add `--phase NN` for an existing project)
-5. Tell the owner in three lines what was written and that the next step is `/phaseproof:phase 01 <name>`.
+6. Tell the owner in three lines what was written and that the next step is `/phaseproof:phase 01 <name>`.
 
 Write no application code here. The gate blocks it anyway until phase 01 is approved.

@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { measure, overBudget } from './lib/budget.mjs';
 import { allPassed, runChecks } from './lib/checks.mjs';
 import { codeFingerprint, reviewDrift } from './lib/drift.mjs';
@@ -14,6 +15,8 @@ import {
   DEFAULT_CONFIG,
   configChanged,
   configHash,
+  currentPhase,
+  findRoot,
   gateFile,
   gitHead,
   gateRuns,
@@ -101,7 +104,25 @@ function testWarnings(root, phase, approval) {
 
 function requireActive(root) {
   if (!isActive(root)) refuse('this project is not tracked yet. Run: phaseproof init');
-  return loadState(root);
+  const phase = currentPhase(root);
+  if (!phase) refuse('.phaseproof/state.json cannot be read or has no valid phase number. Run: phaseproof doctor');
+  return { ...loadState(root), phase };
+}
+
+function gitNote(root) {
+  if (gitHead(root) !== null) return null;
+  const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: root, encoding: 'utf8', timeout: 20000 }).stdout?.trim() === 'true';
+  const off = 'so the shell guard, the test comparison, the budget and the "code changed after review" check are off';
+  return inRepo ? `The repository has no commits yet, ${off}. Commit once and approve again.` : `This project is not a git repository, ${off}. Run git init, commit once and approve again.`;
+}
+
+const UNION = 'runs/reviews.jsonl merge=union';
+
+function addUnionMerge(root) {
+  const file = ppPath(root, '.gitattributes');
+  const text = readText(file) ?? '';
+  if (text.split(/\r?\n/).some((line) => line.trim() === UNION)) return;
+  appendFileSync(file, `${text && !text.endsWith('\n') ? '\n' : ''}${UNION}\n`);
 }
 
 function requireReview(root, phase, kind) {
@@ -122,11 +143,15 @@ function checkResults(root, phase) {
   return results;
 }
 
-const describe = (results) => results.map((r) => `  ${r.code === 0 ? 'ok  ' : 'FAIL'} ${r.cmd} (${r.ms} ms)`).join('\n');
+const indent = (text) => text.split('\n').map((line) => `      ${line}`).join('\n');
+const describe = (results) =>
+  results.map((r) => `  ${r.code === 0 ? 'ok  ' : 'FAIL'} ${r.cmd} (${r.ms} ms)${r.code !== 0 && r.tail ? `\n${indent(r.tail)}` : ''}`).join('\n');
 
 const commands = {
   init(root, args, out) {
-    if (isActive(root)) return out('already tracked. Run: phaseproof status');
+    if (isActive(root)) return out(args.includes('--check') ? 'already tracked, checks not changed. Edit "checks" in .phaseproof/config.json; the owner approves again after.' : 'already tracked. Run: phaseproof status');
+    const tracked = findRoot(root);
+    if (tracked !== root) refuse(`already tracked at ${tracked}. Run phaseproof from there; one project has one .phaseproof/ folder`);
     const checks = [];
     let phase = '01';
     for (let i = 0; i < args.length; i++) {
@@ -136,6 +161,7 @@ const commands = {
     writeJson(ppPath(root, 'config.json'), { ...loadConfig(root), checks });
     writeJson(ppPath(root, 'state.json'), { version: 1, phase });
     for (const d of ['reviews', 'approvals', 'gates', 'runs', 'blocks']) mkdirSync(ppPath(root, d), { recursive: true });
+    addUnionMerge(root);
     out(`tracking started at phase ${phase}${checks.length ? '' : '. Add your test/typecheck commands to .phaseproof/config.json'}`);
   },
 
@@ -194,6 +220,8 @@ const commands = {
     const unblocked = existsSync(blockFile(root, phase));
     if (unblocked) rmSync(blockFile(root, phase));
     const notes = [];
+    const noGit = gitNote(root);
+    if (noGit) notes.push(noGit);
     if (quick) notes.push(existingDocs && !parseVerdict(existingDocs).pass ? 'Approved as quick even though its docs review failed.' : 'Approved as quick: no docs review.');
     if (removalAllowance(root, phase)) notes.push(`The scope allows removing tests: ${removalAllowance(root, phase)}.`);
     if (locked.length) notes.push(`Locked tests, closed to edits until the gate: ${listed(locked)}.`);
@@ -310,5 +338,5 @@ export function main(argv, { root = process.cwd(), out = console.log, err = cons
 }
 
 if (isMain(import.meta.url)) {
-  process.exitCode = main(process.argv.slice(2), { root: process.env.CLAUDE_PROJECT_DIR || process.cwd() });
+  process.exitCode = main(process.argv.slice(2), { root: findRoot(process.env.CLAUDE_PROJECT_DIR || process.cwd()) });
 }

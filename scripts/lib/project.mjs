@@ -26,6 +26,10 @@ export function toProjectPath(root, file) {
 
 const nfc = (s) => s.normalize('NFC');
 export const samePath = (a, b) => nfc(a).toLowerCase() === nfc(b).toLowerCase();
+export const inStateDir = (rel) => {
+  const folded = nfc(rel).toLowerCase();
+  return folded === DIR || folded.startsWith(`${DIR}/`);
+};
 
 export function linkedPath(root, rel) {
   const parts = rel.split('/');
@@ -51,6 +55,14 @@ export function exactCase(root, rel) {
   return true;
 }
 export const isActive = (root) => Boolean(root) && existsSync(ppPath(root, 'state.json'));
+
+export function findRoot(start) {
+  if (!start) return start;
+  for (let dir = resolve(start); ; dir = dirname(dir)) {
+    if (isActive(dir)) return dir;
+    if (dirname(dir) === dir) return start;
+  }
+}
 
 export function readJson(file, fallback) {
   try {
@@ -81,6 +93,11 @@ export function loadConfig(root) {
   return { ...config, checks: strings(config.checks) ? config.checks : [], docPaths: strings(config.docPaths) ? config.docPaths : DEFAULT_CONFIG.docPaths };
 }
 export const loadState = (root) => readJson(ppPath(root, 'state.json'), null);
+
+export function currentPhase(root) {
+  const phase = loadState(root)?.phase;
+  return typeof phase === 'string' && /^\d{1,3}$/.test(phase) ? phase : null;
+}
 
 const isDir = (path) => {
   try {
@@ -215,13 +232,20 @@ export function changedLocked(root, phase) {
     .sort();
 }
 
-export function scopeHash(root, phase) {
+const unticked = (text) => text.replace(/\r\n/g, '\n').replace(/^(\s*(?:[-*+]|\d+[.)])\s+)\[[xX]\]/gm, '$1[ ]');
+
+function scopeHashes(root, phase) {
   const dir = phaseDir(root, phase);
   if (!dir) return null;
-  const parts = SCOPE_FILES.map((name) => `${name}\n${readText(join(dir, name)) ?? ''}`);
-  for (const path of lockedTests(root, phase)) parts.push(`locked ${path}\n${lockedDigest(root, path)}`);
-  return sha256(parts.join('\n---\n'));
+  const hash = (fold) => {
+    const parts = SCOPE_FILES.map((name) => `${name}\n${fold(readText(join(dir, name)) ?? '')}`);
+    for (const path of lockedTests(root, phase)) parts.push(`locked ${path}\n${lockedDigest(root, path)}`);
+    return sha256(parts.join('\n---\n'));
+  };
+  return { folded: hash(unticked), raw: hash((t) => t) };
 }
+
+export const scopeHash = (root, phase) => scopeHashes(root, phase)?.folded ?? null;
 
 export function configHash(root) {
   const { checks, docPaths } = loadConfig(root);
@@ -235,7 +259,9 @@ export function configChanged(root, phase) {
 
 export function scopeChanged(root, phase) {
   const approval = readJson(approvalFile(root, phase), null);
-  return Boolean(approval?.scopeHash) && approval.scopeHash !== scopeHash(root, phase);
+  if (!approval?.scopeHash) return false;
+  const now = scopeHashes(root, phase);
+  return approval.scopeHash !== now?.folded && approval.scopeHash !== now?.raw;
 }
 
 export function gitHead(root) {

@@ -6,12 +6,13 @@ import {
   blockFile,
   changedLocked,
   configChanged,
+  currentPhase,
   DEFAULT_CONFIG,
   gateFile,
+  inStateDir,
   isActive,
   linkedPath,
   loadConfig,
-  loadState,
   lockedTests,
   readJson,
   samePath,
@@ -23,8 +24,8 @@ import { isTestFile } from './tests-guard.mjs';
 export { toProjectPath };
 
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
-const PROTECTED_IN_BASH = /\.phaseproof[\\/]+(gates|approvals|runs|blocks)\b/;
-const APPROVE_IN_BASH = /phaseproof\.mjs["']?\s+approve\b/;
+const PROTECTED_IN_BASH = /\.phaseproof[\\/]+(gates|approvals|runs|blocks)\b/i;
+const APPROVE_IN_BASH = /phaseproof\.mjs["']?\s+approve\b/i;
 const WRITABLE_STATE = ['.phaseproof/reviews/', '.phaseproof/config.json'];
 
 const allow = { allow: true };
@@ -51,15 +52,16 @@ export function decide({ root, toolName, toolInput = {} }) {
   const rel = toProjectPath(root, String(file));
   if (!rel) return allow;
 
-  if (rel.startsWith('.phaseproof/')) {
-    if (WRITABLE_STATE.some((p) => rel === p || rel.startsWith(p))) return allow;
+  if (inStateDir(rel)) {
+    const folded = rel.normalize('NFC').toLowerCase();
+    if (WRITABLE_STATE.some((p) => folded === p || folded.startsWith(p))) return allow;
     return deny(`${rel} is written by the phaseproof script, not by hand.`);
   }
 
   const locked = lockedReason(root, rel);
   if (locked !== undefined) return locked ? deny(locked) : allow;
 
-  const phase = loadState(root)?.phase;
+  const phase = currentPhase(root);
   const docPaths = phase && configChanged(root, phase) ? DEFAULT_CONFIG.docPaths : loadConfig(root).docPaths;
   if (isDoc(rel, docPaths)) return allow;
 
@@ -70,7 +72,7 @@ export function decide({ root, toolName, toolInput = {} }) {
 const listsPath = (root, paths, rel) => paths.some((p) => samePath(toProjectPath(root, p) ?? '', rel));
 
 function lockedReason(root, rel) {
-  const phase = loadState(root)?.phase;
+  const phase = currentPhase(root);
   if (!phase) return undefined;
   const approval = readJson(approvalFile(root, phase), null);
   if (approval) {
@@ -108,8 +110,8 @@ function committed(root, rel) {
 }
 
 export function closedReason(root) {
-  const phase = loadState(root)?.phase;
-  if (!phase) return '.phaseproof/state.json has no current phase. Run /phaseproof:status.';
+  const phase = currentPhase(root);
+  if (!phase) return '.phaseproof/state.json cannot be read or has no valid phase number. Run /phaseproof:doctor.';
   if (!existsSync(approvalFile(root, phase))) {
     return `phase ${phase} is not approved, so code stays closed. Finish and review the phase docs, then the owner runs /phaseproof:approve ${phase}.`;
   }
