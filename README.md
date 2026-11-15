@@ -3,15 +3,26 @@
 ![phaseproof: make the AI build in phases. Code stays locked until you approve the phase.](.github/assets/header-light.png#gh-light-mode-only)
 ![phaseproof: make the AI build in phases. Code stays locked until you approve the phase.](.github/assets/header-dark.png#gh-dark-mode-only)
 
-[![ci](https://github.com/speedsharmaai/phaseproof/actions/workflows/ci.yml/badge.svg)](https://github.com/speedsharmaai/phaseproof/actions/workflows/ci.yml)
-[![license: MIT](https://img.shields.io/badge/license-MIT-1F5A44)](LICENSE)
-[![version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fspeedsharmaai%2Fphaseproof%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=version&color=1F5A44)](CHANGELOG.md)
-![dependencies: 0](https://img.shields.io/badge/dependencies-0-1F5A44)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/speedsharmaai/phaseproof/badge)](https://scorecard.dev/viewer/?uri=github.com/speedsharmaai/phaseproof)
+**Claude Code can't write your code until you approve the plan.** Not a prompt asking it nicely: a hook refuses the write.
 
-**A Claude Code plugin that makes AI build in phases.** Docs first, design next, code only after you approve, and every phase checked by an independent reviewer agent on a stronger model before it closes.
+```
+> Add OTP sign-in                                   (abridged session)
 
-A phase is done when its "Done when" line is true on the running system, not when its code compiles.
+  Write(src/auth/otp.ts)
+  ⎿  phaseproof: phase 01 is not approved, so code stays closed. Finish and
+     review the phase docs, then the owner runs /phaseproof:approve 01.
+
+  Writing phases/phase-01-sign-in/scope.md and tasks.md instead.
+  Sending them to the doc reviewer (Opus)... VERDICT: PASS
+
+> /phaseproof:approve 01
+  phase 01 approved. Code is open for this phase. The gate will run: npm test.
+
+  Write(src/auth/otp.ts)
+  ⎿  Wrote 48 lines
+```
+
+Only you can approve. "Just write the code" in chat does not count: the approve skill is owner-only, and the hook refuses it from Bash. After approval, Sonnet builds, Opus reviews the diff against the plan, and the gate re-runs your tests itself before the phase can close.
 
 ```
 /plugin marketplace add speedsharmaai/phaseproof
@@ -25,10 +36,17 @@ Then, in your project:
 /phaseproof:phase 01 sign-in                       scope and tasks, checked by a reviewer
 /phaseproof:approve 01                             you sign off; Claude cannot
 /phaseproof:build                                  build, code review, gate
-/phaseproof:doctor                                 if anything seems off
 ```
 
-**New in 0.5 to 0.7:** acceptance tests you lock with the plan that the agent cannot edit, check commands bound to your approval, a gate that refuses when code changed after the review, per-phase gate commands and change budgets, a one-time nudge before Claude finishes on red checks, and `doctor` and `report` commands. See the [changelog](CHANGELOG.md).
+Small change? `/phaseproof:quick` skips the planning ceremony and keeps one review and the gate. Something odd? `/phaseproof:doctor`.
+
+[![ci](https://github.com/speedsharmaai/phaseproof/actions/workflows/ci.yml/badge.svg)](https://github.com/speedsharmaai/phaseproof/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-1F5A44)](LICENSE)
+[![version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fspeedsharmaai%2Fphaseproof%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=version&color=1F5A44)](CHANGELOG.md)
+![dependencies: 0](https://img.shields.io/badge/dependencies-0-1F5A44)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/speedsharmaai/phaseproof/badge)](https://scorecard.dev/viewer/?uri=github.com/speedsharmaai/phaseproof)
+
+Plain Node, no dependencies, and the plugin's own code makes no network requests ([privacy](PRIVACY.md)). The hooks never modify or delete your files; when something looks wrong they stop and tell you. See the [changelog](CHANGELOG.md) for what's new.
 
 ## Why
 
