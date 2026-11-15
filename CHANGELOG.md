@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0 - 2026-11-16
+
+- Facts bound to files: a lesson in `docs/learnings.md` ending with `(applies to: <paths>)`, or an ADR with an `**Applies to:**` line, is shown to Claude along with its edit to one of those files, with its source line and whether a gate has checked it. Claude reads it right after the call, so it can correct a change that breaks the fact. The hook only adds context, never decides a permission, and adds nothing to a refused edit
+- The code reviewer gets the facts that cover the changed code and says for each whether it still holds; breaking one is a blocker. The gate records which facts it checked
+- `phaseproof facts` lists facts, the facts for a file, or (`--since`) the facts that cover the changed code, and names facts whose paths match no file
+- The build skill ends each new lesson with the files it is about, and the ADR template has an **Applies to:** line
+
 ## 0.8.0 - 2026-11-16
 
 - After `/compact`, a resume, a fork or a new session, phaseproof puts back where the phase stands, not only which phase it is: open blockers from the last code review, the failing check and its last lines, and the next unticked task. It is read from the phase records, clipped, labelled as data, and only added while a phase is building (not while it is blocked or its approval is stale). Blockers and a failed run are marked when code was edited with Write or Edit after them. SessionStart runs no git for this

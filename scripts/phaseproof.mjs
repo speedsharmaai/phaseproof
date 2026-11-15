@@ -6,6 +6,7 @@ import { allPassed, runChecks } from './lib/checks.mjs';
 import { codeFingerprint, reviewDrift } from './lib/drift.mjs';
 import { lockIssues } from './lib/locks.mjs';
 import { doctor } from './lib/doctor.mjs';
+import { confirmFacts, describeFact, factsFor, loadFacts } from './lib/facts.mjs';
 import { report } from './lib/report.mjs';
 import { isMain } from './lib/main.mjs';
 import {
@@ -58,6 +59,9 @@ const USAGE = `usage: phaseproof <command>
   gate <phase>                re-run checks, read the code review, close the phase
   block [phase]               stop the phase after a failed code review until the owner decides
   next                        move to the next phase once the gate has passed
+  facts [path]... | --since [base]
+                              facts in docs/learnings.md and ADRs bound to these files,
+                              or to the code changed since the approval's base
   doctor                      check the setup and say what to fix
   report                      what the reviews and gates caught, phase by phase`;
 
@@ -288,7 +292,46 @@ const commands = {
       warnings,
       testWarnings: tests,
     });
+    let checked = 0;
+    try {
+      const fp = codeFingerprint(root, approval.base ?? approval.head ?? null);
+      if (fp) checked = confirmFacts(root, phase, [...Object.keys(fp.tracked), ...Object.keys(fp.untracked)]);
+    } catch {}
+    if (checked) out(`${checked} bound fact${checked === 1 ? '' : 's'} checked at this gate`);
     out(`phase ${phase} gate: PASS`);
+  },
+
+  facts(root, args, out) {
+    const { phase } = requireActive(root);
+    const facts = loadFacts(root);
+    if (!facts.length) return out('no bound facts. Add "(applies to: <paths>)" to a line in docs/learnings.md, or an **Applies to:** line to an ADR');
+    let paths = args.filter((a) => !a.startsWith('--'));
+    if (args.includes('--since')) {
+      const approval = readJson(approvalFile(root, phase), {}) ?? {};
+      const base = paths[0] ?? approval.base ?? approval.head ?? null;
+      const fp = codeFingerprint(root, base);
+      if (!fp) refuse(`cannot list the code changed since ${base ?? 'the approval'}: no git base`);
+      paths = [...Object.keys(fp.tracked), ...Object.keys(fp.untracked)];
+      const bound = facts.filter((f) => paths.some((p) => factsFor(root, p, [f]).length));
+      if (!bound.length) return out('no bound facts cover the changed code');
+      const shown = bound.slice(0, 10);
+      out([`${bound.length} bound fact${bound.length === 1 ? '' : 's'} cover the code changed since ${String(base).slice(0, 12)}:`, ...shown.map((f) => describeFact(root, f)), ...(bound.length > 10 ? [`and ${bound.length - 10} more`] : [])].join('\n'));
+      return;
+    }
+    if (paths.length) {
+      const lines = paths.flatMap((p) => {
+        const found = factsFor(root, p, facts);
+        return [`${p}:`, ...(found.length ? found.map((f) => `  ${describeFact(root, f)}`) : ['  no bound facts'])];
+      });
+      return out(lines.join('\n'));
+    }
+    const tracked = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8', timeout: 20000, maxBuffer: 256 * 1024 * 1024 });
+    const files = tracked.status === 0 ? tracked.stdout.split('\0').filter(Boolean) : null;
+    const lines = facts.map((f) => `${describeFact(root, f)} [${f.patterns.join(', ')}]`);
+    if (files) {
+      for (const f of facts) if (!files.some((p) => factsFor(root, p, [f]).length)) lines.push(`matches no file: ${f.source}:${f.line} ${f.text.slice(0, 80)}`);
+    }
+    out(lines.join('\n'));
   },
 
   block(root, args, out) {

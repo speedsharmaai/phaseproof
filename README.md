@@ -136,6 +136,20 @@ Every command and hook uses the nearest folder above it that has `.phaseproof/st
 
 In any project without `.phaseproof/state.json` it does nothing. If the hook gets input it cannot parse, it allows the call rather than locking your session.
 
+### Facts bound to files
+
+A line in `docs/learnings.md` that ends with `(applies to: src/auth/**, src/otp.ts)`, or an ADR with an `**Applies to:**` line, is a fact bound to those files:
+
+```
+- OTP codes expired after 50 minutes, not 5 -> a locked test checks expiry (applies to: src/auth/**)
+```
+
+When Claude edits a bound file, the `PreToolUse` hook adds the matching facts to its context along with that edit, at most three, each with its source line and whether a gate has checked it yet. Claude reads them right after the call, so the edit itself still goes ahead, and Claude can correct a change that breaks one straight away. In a test where the fact said codes expire after 5 minutes and Claude was told to set 3600 seconds, it made the edit, quoted the fact, and flagged the conflict. Memory written at the start of a session gets summarised away; this arrives with the edit it is about. The hook only adds context: it never allows a call that your permission settings would ask about, and when the edit is refused nothing is added. Each fact is shown once per session, and again after `/compact` or `/clear`. The text is labelled as data from the project's docs; it is repo content like any other.
+
+At review, the build skill hands the code reviewer every fact that covers the changed code (`phaseproof facts --since`), and the reviewer says for each one whether it still holds. Breaking a fact is a blocker unless the scope changes it on purpose. When the gate passes, the facts the phase's diff touched are recorded as checked at that gate, in `.phaseproof/runs/facts.json`. Editing a fact's text makes it a new, unchecked fact.
+
+`phaseproof facts` lists every fact and the ones whose paths match no file; `phaseproof facts src/otp.ts` shows the facts for a file. Paths are relative to the project folder: an exact path, a folder ending in `/`, `*` within one folder, and `**` across folders, matched without regard to case. The build skill writes the binding when it adds a lesson after a gate. Files over 256 KB are not read. The per-session record of what was shown lives in `.phaseproof/cache/`, which `.phaseproof/.gitignore` keeps out of git.
+
 Locked tests stop edits to the listed files. They do not stop code that special-cases those tests to pass, or a change to the test script or runner config that stops them running; the code reviewer is told to treat both as blockers, and that is a model's judgement, not a guarantee. Fixtures and mocks the tests use cannot be locked.
 
 It is a guardrail against drift, not a security boundary. The shell guard detects writes after the fact; it does not prevent or undo them. It only sees what `git status` sees: gitignored or excluded paths, files marked assume-unchanged, changes inside nested repos, files outside the project, background and detached processes, commands interrupted before they finish, a command that deletes `.git` or the guard's own records, and network calls are out of its reach. Files over 1 MB, and runs with more than 2000 dirty files, are compared by size and modification time only, so a same-size rewrite that keeps the timestamp goes unnoticed. It cannot tell who made a change, so an edit you save in your editor during a command is reported too. For real prevention, use an OS-level sandbox. A review report is model output like any other. What it reliably stops is the common failure: an agent that skips the plan, skips the review, or calls a phase done with red tests.
