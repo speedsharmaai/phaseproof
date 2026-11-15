@@ -34,6 +34,7 @@ import {
   reviewFile,
   runFile,
   scopeChanged,
+  scopeMatches,
   scopeBudget,
   scopeHash,
   scopeList,
@@ -211,11 +212,12 @@ const commands = {
     if (existsSync(join(dir, 'screens.md'))) requireReview(root, phase, 'design');
     const locked = requireLockable(root, phase);
     const scope = scopeHash(root, phase);
-    if (!quick && previous?.scopeHash && previous.scopeHash !== scope && previous.docsReview === docs) {
+    if (!quick && previous?.scopeHash && !scopeMatches(root, phase, previous.scopeHash) && previous.docsReview === docs) {
       refuse(`phase ${phase} scope changed since the last approval. Get a fresh docs review first.`);
     }
     const head = gitHead(root);
     const base = args.includes('--new-base') ? head : (previous?.base ?? previous?.head ?? head);
+    addUnionMerge(root);
     writeJson(approvalFile(root, phase), { phase, approvedAt: new Date().toISOString(), head, base, size: quick ? 'quick' : 'full', scopeHash: scope, docsReview: docs, configHash: configHash(root), locked: lockedDigests(root, phase) });
     const unblocked = existsSync(blockFile(root, phase));
     if (unblocked) rmSync(blockFile(root, phase));
@@ -338,5 +340,6 @@ export function main(argv, { root = process.cwd(), out = console.log, err = cons
 }
 
 if (isMain(import.meta.url)) {
-  process.exitCode = main(process.argv.slice(2), { root: findRoot(process.env.CLAUDE_PROJECT_DIR || process.cwd()) });
+  const start = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  process.exitCode = main(process.argv.slice(2), { root: process.argv[2] === 'init' ? start : findRoot(start) });
 }

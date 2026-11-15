@@ -25,11 +25,14 @@ export function toProjectPath(root, file) {
 }
 
 const nfc = (s) => s.normalize('NFC');
-export const samePath = (a, b) => nfc(a).toLowerCase() === nfc(b).toLowerCase();
-export const inStateDir = (rel) => {
-  const folded = nfc(rel).toLowerCase();
-  return folded === DIR || folded.startsWith(`${DIR}/`);
+const fold = (s) => nfc(s).toUpperCase().toLowerCase();
+export const samePath = (a, b) => fold(a) === fold(b);
+
+const stateDirName = (segment) => {
+  const name = fold(segment).replace(/[. ]+$/, '');
+  return name === DIR || /^phasep~\d+$/.test(name);
 };
+export const inStateDir = (rel) => stateDirName(rel.split('/')[0]);
 
 export function linkedPath(root, rel) {
   const parts = rel.split('/');
@@ -232,17 +235,18 @@ export function changedLocked(root, phase) {
     .sort();
 }
 
-const unticked = (text) => text.replace(/\r\n/g, '\n').replace(/^(\s*(?:[-*+]|\d+[.)])\s+)\[[xX]\]/gm, '$1[ ]');
+const lf = (text) => text.replace(/\r\n/g, '\n');
+const unticked = (text) => lf(text).replace(/^([ \t]*(?:[-*+]|\d+[.)])[ \t]+)\[[xX]\]/gm, '$1[ ]');
 
 function scopeHashes(root, phase) {
   const dir = phaseDir(root, phase);
   if (!dir) return null;
-  const hash = (fold) => {
-    const parts = SCOPE_FILES.map((name) => `${name}\n${fold(readText(join(dir, name)) ?? '')}`);
+  const hash = (normalize) => {
+    const parts = SCOPE_FILES.map((name) => `${name}\n${normalize(name, readText(join(dir, name)) ?? '')}`);
     for (const path of lockedTests(root, phase)) parts.push(`locked ${path}\n${lockedDigest(root, path)}`);
     return sha256(parts.join('\n---\n'));
   };
-  return { folded: hash(unticked), raw: hash((t) => t) };
+  return { folded: hash((name, t) => (name === 'tasks.md' ? unticked(t) : lf(t))), raw: hash((_name, t) => t) };
 }
 
 export const scopeHash = (root, phase) => scopeHashes(root, phase)?.folded ?? null;
@@ -257,11 +261,14 @@ export function configChanged(root, phase) {
   return Boolean(approval?.configHash) && approval.configHash !== configHash(root);
 }
 
+export function scopeMatches(root, phase, hash) {
+  const now = scopeHashes(root, phase);
+  return hash === now?.folded || hash === now?.raw;
+}
+
 export function scopeChanged(root, phase) {
   const approval = readJson(approvalFile(root, phase), null);
-  if (!approval?.scopeHash) return false;
-  const now = scopeHashes(root, phase);
-  return approval.scopeHash !== now?.folded && approval.scopeHash !== now?.raw;
+  return Boolean(approval?.scopeHash) && !scopeMatches(root, phase, approval.scopeHash);
 }
 
 export function gitHead(root) {

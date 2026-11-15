@@ -2,15 +2,16 @@
 
 ## 0.7.1 - 2026-11-15
 
-- Ticking a box in tasks.md no longer closes code. Before, the builder's first `- [x]` made the approval stale and the gate refused with "scope changed". CRLF line endings in the phase docs no longer count as a change either. Approvals made by 0.7.0 stay valid
+- Ticking a box in tasks.md no longer closes code. Before, the builder's first `- [x]` made the approval stale and the gate refused with "scope changed". Only tasks.md boxes are folded; a box in scope.md or screens.md is still a scope change. CRLF line endings in the phase docs no longer count as a change. A 0.7.0 approval stays valid and can be re-approved as it is, but if it was made with boxes already ticked, or on CRLF files, the next tick closes code once and needs one more approval
 - Every command and hook finds the project from a subfolder (the nearest `.phaseproof/state.json` above). Before, the CLI said "not tracked yet" after any `cd`, and following its advice made a second `.phaseproof/` inside the project. `init` now refuses there. This also means a Claude Code session opened in a subfolder of a tracked project is now gated, where before phaseproof did nothing there. `doctor` names the folder it is using
-- `.phaseproof/` records are protected in any letter case. On macOS and Windows a write to `.PhaseProof/approvals/...` landed in `.phaseproof/` and was allowed
+- `.phaseproof/` records are protected under every spelling the file system folds to that folder: any letter case (including the long s, `ſ`, which macOS folds to `s`), trailing dots or spaces and the 8.3 short name on Windows. Before, a write to `.PhaseProof/approvals/...` on macOS or Windows landed in `.phaseproof/` and was allowed. Reviews must be saved under the exact path `.phaseproof/reviews/`
 - A failing check prints its last 20 lines under the FAIL line
-- A check is stopped after 10 minutes and counted as failed, instead of hanging the gate
+- A check is stopped after 10 minutes, together with every process it started, and counted as failed, instead of hanging the gate
 - An empty or broken `state.json` gives a clear message pointing at `doctor` instead of a TypeError
 - `approve` says when there is no git repository or no commit yet, and which protections are off because of it. Kickoff asks for a git repository with one commit
-- The review parser reads `**VERDICT:** PASS` and `` `VERDICT: FAIL` ``, ignores the template line `VERDICT: PASS | FAIL`, and counts numbered and bold blockers
-- `init` writes the `merge=union` rule for the review history to `.phaseproof/.gitattributes`, as the README already said
+- The review parser reads `**VERDICT:** PASS` and `` `VERDICT: FAIL` ``, ignores the template line `VERDICT: PASS | FAIL`, and counts numbered and bold blockers. A review with a FAIL verdict line anywhere is a FAIL, even if another line says PASS
+- `init` and `approve` write the `merge=union` rule for the review history to `.phaseproof/.gitattributes`, as the README already said
+- `init` on a tracked project with `--check` says the checks were not changed and where to edit them
 - The session context is put back after a fork (`/fork`, `/branch`, `--fork-session`) too
 - `doctor` warns when `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` makes Claude Code ignore the reviewers' `model: opus`
 

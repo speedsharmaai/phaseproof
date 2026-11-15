@@ -45,6 +45,21 @@ test('editing task text still closes code', (t) => {
   assert.match(write(root, 'src/otp.js').reason, /scope changed after it was approved/);
 });
 
+test('ticking a box in scope.md is a scope change', (t) => {
+  const root = withTasks(t);
+  put(root, 'phases/phase-01-otp/scope.md', '# Phase 01\n\n- [ ] billing\n');
+  put(root, '.phaseproof/reviews/phase-01-docs.md', `${PASS}\nwith billing line\n`);
+  assert.equal(cli(root, 'approve', '01').code, 0);
+  put(root, 'phases/phase-01-otp/scope.md', '# Phase 01\n\n- [x] billing\n');
+  assert.equal(write(root, 'src/otp.js').allow, false);
+});
+
+test('a box only counts when it sits on its list item line', (t) => {
+  const root = withTasks(t, `${TASKS}\n-\n[ ] = exported row\n`);
+  put(root, 'phases/phase-01-otp/tasks.md', `${TASKS}\n-\n[x] = exported row\n`);
+  assert.equal(write(root, 'src/otp.js').allow, false);
+});
+
 test('only a list-item checkbox is folded, not [x] elsewhere in the text', (t) => {
   const root = withTasks(t, `${TASKS}\nKeep the [ ] marker in the CSV export.\n`);
   put(root, 'phases/phase-01-otp/tasks.md', `${TASKS}\nKeep the [x] marker in the CSV export.\n`);
@@ -59,6 +74,17 @@ test('an approval made by 0.7.0 on ticked boxes stays valid', (t) => {
   writeJson(approvalFile(root, '01'), { ...readJson(approvalFile(root, '01')), scopeHash: raw });
   assert.notEqual(raw, scopeHash(root, '01'));
   assert.equal(write(root, 'src/otp.js').allow, true);
+  const again = cli(root, 'approve', '01');
+  assert.equal(again.code, 0, again.err);
+});
+
+test('re-approving an untouched 0.7.0 phase with CRLF docs is not refused', (t) => {
+  const root = withTasks(t, TASKS.replace(/\n/g, '\r\n'));
+  const dir = join(root, 'phases/phase-01-otp');
+  const raw = sha256(['scope.md', 'tasks.md', 'screens.md'].map((n) => `${n}\n${existsSync(join(dir, n)) ? readFileSync(join(dir, n), 'utf8') : ''}`).join('\n---\n'));
+  writeJson(approvalFile(root, '01'), { ...readJson(approvalFile(root, '01')), scopeHash: raw });
+  const r = cli(root, 'approve', '01');
+  assert.equal(r.code, 0, r.err);
 });
 
 test('the CLI finds the project from a subfolder, the same root the hook uses', (t) => {
@@ -74,6 +100,16 @@ test('the CLI finds the project from a subfolder, the same root the hook uses', 
   assert.equal(viaHook.hookSpecificOutput.permissionDecision, 'deny');
 });
 
+test('init from a subfolder of a tracked project refuses through the real CLI too', (t) => {
+  const root = approvedProject(t);
+  const sub = join(root, 'packages', 'web');
+  put(sub, 'index.js');
+  const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'scripts', 'phaseproof.mjs'), 'init'], { cwd: sub, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: '' } });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /already tracked at/);
+  assert.equal(existsSync(join(sub, '.phaseproof')), false);
+});
+
 test('init inside a tracked project refuses instead of nesting', (t) => {
   const root = approvedProject(t);
   const sub = join(root, 'phases');
@@ -83,21 +119,22 @@ test('init inside a tracked project refuses instead of nesting', (t) => {
   assert.equal(existsSync(join(sub, '.phaseproof')), false);
 });
 
-test('.phaseproof records are protected in any letter case', (t) => {
+test('.phaseproof records are protected under any spelling the file system folds to it', (t) => {
   const root = approvedProject(t);
-  for (const rel of ['.PhaseProof/approvals/phase-02.json', '.PHASEPROOF/state.json', '.Phaseproof/gates/phase-01.json']) {
-    assert.equal(write(root, rel).allow, false, rel);
+  const spellings = ['.PhaseProof/approvals/phase-02.json', '.PHASEPROOF/state.json', '.Phaseproof/gates/phase-01.json', '.pha\u017Feproof/gates/phase-01.json', '.phaseproof./approvals/phase-01.json', '.phaseproof /state.json', 'PHASEP~1/gates/phase-01.json'];
+  for (const rel of spellings) assert.equal(write(root, rel).allow, false, rel);
+  assert.equal(write(root, '.phaseproof/reviews/phase-01-code.md').allow, true);
+  assert.equal(write(root, '.PhaseProof/reviews/phase-01-code.md').allow, false);
+  for (const cmd of ['echo {} > .PhaseProof/approvals/phase-01.json', 'echo {} > .pha\u017Feproof/gates/phase-01.json', 'echo {} > .phaseproof./gates/phase-01.json', 'node scripts/PHASEPROOF.mjs approve 01']) {
+    assert.equal(bash(root, cmd).allow, false, cmd);
   }
-  assert.equal(write(root, '.PhaseProof/reviews/phase-01-code.md').allow, true);
-  assert.equal(bash(root, 'echo {} > .PhaseProof/approvals/phase-01.json').allow, false);
-  assert.equal(bash(root, 'node scripts/PHASEPROOF.mjs approve 01').allow, false);
 });
 
 test('a failing check prints its output, not only its name', (t) => {
-  const root = approvedProject(t, ['node -e "console.error(\'expected 3 got 4 at sum.test.js:7\'); process.exit(1)"']);
+  const root = approvedProject(t, ['node -e "console.error(\'expected \' + 3 + \' got \' + 4 + \' at sum.test.js:7\'); process.exit(1)"']);
   const r = cli(root, 'check');
   assert.equal(r.code, 1);
-  assert.match(r.out, /expected 3 got 4 at sum\.test\.js:7/);
+  assert.match(r.out, /\n {6}expected 3 got 4 at sum\.test\.js:7/);
 });
 
 test('a passing check stays one line', (t) => {
@@ -107,10 +144,14 @@ test('a passing check stays one line', (t) => {
   assert.doesNotMatch(out, /lots of noise/);
 });
 
-test('a check that hangs is stopped and reported', () => {
-  const [r] = runChecks(process.cwd(), ['node -e "setTimeout(() => {}, 60000)"'], undefined, 500);
+test('a check that hangs is stopped and reported, with what it started', (t) => {
+  const root = tempProject(t);
+  const pidFile = join(root, 'pid');
+  const [r] = runChecks(root, [`node -e "require('fs').writeFileSync('pid', String(process.pid)); setTimeout(() => {}, 60000)"; echo done`], 1500);
   assert.notEqual(r.code, 0);
   assert.match(r.tail, /timed out after/);
+  const pid = Number(readFileSync(pidFile, 'utf8'));
+  assert.throws(() => process.kill(pid, 0), /ESRCH/);
 });
 
 test('an unreadable state.json is a clear refusal that points at doctor', (t) => {
@@ -145,6 +186,12 @@ test('verdict: markdown bold and code around the line still count', () => {
   assert.equal(parseVerdict('**VERDICT:** PASS\n').pass, true);
   assert.equal(parseVerdict('**VERDICT: FAIL**\n').reason, 'verdict is FAIL');
   assert.equal(parseVerdict('`VERDICT: PASS`\n').pass, true);
+});
+
+test('verdict: any FAIL line wins over a quoted PASS', () => {
+  assert.equal(parseVerdict('VERDICT: FAIL | 2 majors\n\n## Checked\n- cat docs review:\nVERDICT: PASS\n').pass, false);
+  assert.equal(parseVerdict('`VERDICT: PASS` once the retry bug is fixed.\nVERDICT: FAIL\n').pass, false);
+  assert.equal(parseVerdict('**VERDICT: PASS** would need the migration test.\nVERDICT: FAIL\n').pass, false);
 });
 
 test('verdict: the template line is not a verdict', () => {

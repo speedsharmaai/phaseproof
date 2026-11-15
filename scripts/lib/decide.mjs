@@ -24,8 +24,8 @@ import { isTestFile } from './tests-guard.mjs';
 export { toProjectPath };
 
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
-const PROTECTED_IN_BASH = /\.phaseproof[\\/]+(gates|approvals|runs|blocks)\b/i;
-const APPROVE_IN_BASH = /phaseproof\.mjs["']?\s+approve\b/i;
+const PROTECTED_IN_BASH = /\.phaseproof[. ]*[\\/]+(gates|approvals|runs|blocks)\b|phasep~\d+[\\/]+(gates|approvals|runs|blocks)\b/iu;
+const APPROVE_IN_BASH = /phaseproof\.mjs["']?\s+approve\b/iu;
 const WRITABLE_STATE = ['.phaseproof/reviews/', '.phaseproof/config.json'];
 
 const allow = { allow: true };
@@ -53,8 +53,7 @@ export function decide({ root, toolName, toolInput = {} }) {
   if (!rel) return allow;
 
   if (inStateDir(rel)) {
-    const folded = rel.normalize('NFC').toLowerCase();
-    if (WRITABLE_STATE.some((p) => folded === p || folded.startsWith(p))) return allow;
+    if (WRITABLE_STATE.some((p) => rel === p || rel.startsWith(p))) return allow;
     return deny(`${rel} is written by the phaseproof script, not by hand.`);
   }
 
