@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { decide } from '../scripts/lib/decide.mjs';
 import { runChecks } from '../scripts/lib/checks.mjs';
@@ -225,4 +225,62 @@ test('doctor warns when a setting forces every subagent onto one model', (t) => 
   assert.equal(warned({ CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1', CLAUDE_CODE_SUBAGENT_MODEL: 'sonnet' }), true);
   assert.equal(warned({ CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '0' }), false);
   assert.equal(warned({}), false);
+});
+
+test('a path to the project spelled through a symlink or another letter case is still inside it', (t) => {
+  const root = tempProject(t);
+  cli(root, 'init');
+  const other = tempProject(t);
+  const viaCase = root.toUpperCase();
+  if (viaCase !== root && existsSync(viaCase)) {
+    assert.equal(decide({ root, toolName: 'Write', toolInput: { file_path: join(viaCase, 'src/a.js') } }).allow, false);
+    assert.equal(decide({ root, toolName: 'Write', toolInput: { file_path: join(viaCase, '.phaseproof/gates/phase-01.json') } }).allow, false);
+  }
+  if (process.platform !== 'win32') {
+    const link = join(other, 'link');
+    symlinkSync(root, link);
+    assert.equal(decide({ root, toolName: 'Write', toolInput: { file_path: join(link, 'src/a.js') } }).allow, false);
+    assert.equal(decide({ root, toolName: 'Write', toolInput: { file_path: join(link, '.phaseproof/approvals/phase-01.json') } }).allow, false);
+  }
+  assert.equal(decide({ root, toolName: 'Write', toolInput: { file_path: join(other, 'src/a.js') } }).allow, true);
+});
+
+test('an NTFS stream suffix does not hide the .phaseproof folder', (t) => {
+  const root = approvedProject(t);
+  assert.equal(write(root, '.phaseproof::$INDEX_ALLOCATION/approvals/phase-01.json').allow, false);
+});
+
+test('interrupting the CLI stops the check it was running', { skip: process.platform === 'win32' }, async (t) => {
+  const root = approvedProject(t, [`node -e "require('fs').writeFileSync('pid', String(process.pid)); setTimeout(() => {}, 30000)"`]);
+  const cliProc = spawn(process.execPath, [join(import.meta.dirname, '..', 'scripts', 'phaseproof.mjs'), 'check'], { cwd: root, detached: true, stdio: 'ignore', env: { ...process.env, CLAUDE_PROJECT_DIR: root } });
+  const pidFile = join(root, 'pid');
+  for (let i = 0; i < 100 && !existsSync(pidFile); i++) await new Promise((r) => setTimeout(r, 100));
+  const pid = Number(readFileSync(pidFile, 'utf8'));
+  process.kill(-cliProc.pid, 'SIGINT');
+  let alive = true;
+  for (let i = 0; i < 50 && alive; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    try {
+      process.kill(pid, 0);
+    } catch {
+      alive = false;
+    }
+  }
+  assert.equal(alive, false);
+});
+
+test('approve adds the union rule to a project made before it, and never writes through a symlink', (t) => {
+  const root = approvedProject(t);
+  rmSync(join(root, '.phaseproof/.gitattributes'));
+  assert.equal(cli(root, 'approve', '01').code, 0);
+  assert.match(readFileSync(join(root, '.phaseproof/.gitattributes'), 'utf8'), /merge=union/);
+  if (process.platform === 'win32') return;
+  rmSync(join(root, '.phaseproof/.gitattributes'));
+  symlinkSync('gates/phase-01.json', join(root, '.phaseproof/.gitattributes'));
+  cli(root, 'approve', '01');
+  assert.equal(existsSync(join(root, '.phaseproof/gates/phase-01.json')), false);
+});
+
+test('verdict: FAILED counts as FAIL', () => {
+  assert.equal(parseVerdict('VERDICT: FAILED\nquoted:\nVERDICT: PASS\n').pass, false);
 });

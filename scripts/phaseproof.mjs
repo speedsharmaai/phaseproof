@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { measure, overBudget } from './lib/budget.mjs';
@@ -16,6 +16,7 @@ import {
   configChanged,
   configHash,
   currentPhase,
+  ensureLine,
   findRoot,
   gateFile,
   gitHead,
@@ -120,10 +121,7 @@ function gitNote(root) {
 const UNION = 'runs/reviews.jsonl merge=union';
 
 function addUnionMerge(root) {
-  const file = ppPath(root, '.gitattributes');
-  const text = readText(file) ?? '';
-  if (text.split(/\r?\n/).some((line) => line.trim() === UNION)) return;
-  appendFileSync(file, `${text && !text.endsWith('\n') ? '\n' : ''}${UNION}\n`);
+  ensureLine(ppPath(root, '.gitattributes'), UNION);
 }
 
 function requireReview(root, phase, kind) {

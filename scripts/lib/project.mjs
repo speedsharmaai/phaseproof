@@ -1,5 +1,5 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
@@ -18,10 +18,24 @@ export function padPhase(id) {
 
 export const ppPath = (root, ...parts) => join(root, DIR, ...parts);
 
+function onDisk(path) {
+  const rest = [];
+  for (let cur = resolve(path); ; cur = dirname(cur)) {
+    try {
+      return join(realpathSync.native(cur), ...rest.reverse());
+    } catch {
+      if (dirname(cur) === cur) return resolve(path);
+      rest.push(basename(cur));
+    }
+  }
+}
+
+const inside = (rel) => Boolean(rel) && !rel.startsWith('..') && !isAbsolute(rel);
+
 export function toProjectPath(root, file) {
-  const rel = relative(resolve(root), resolve(root, file));
-  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
-  return rel.split(sep).join('/');
+  let rel = relative(resolve(root), resolve(root, file));
+  if (!inside(rel)) rel = relative(onDisk(root), onDisk(resolve(root, file)));
+  return inside(rel) ? rel.split(sep).join('/') : null;
 }
 
 const nfc = (s) => s.normalize('NFC');
@@ -29,7 +43,7 @@ const fold = (s) => nfc(s).toUpperCase().toLowerCase();
 export const samePath = (a, b) => fold(a) === fold(b);
 
 const stateDirName = (segment) => {
-  const name = fold(segment).replace(/[. ]+$/, '');
+  const name = fold(segment).split(':')[0].replace(/[. ]+$/, '');
   return name === DIR || /^phasep~\d+$/.test(name);
 };
 export const inStateDir = (rel) => stateDirName(rel.split('/')[0]);
@@ -73,6 +87,18 @@ export function readJson(file, fallback) {
   } catch {
     return fallback;
   }
+}
+
+export function ensureLine(file, line) {
+  try {
+    if (!lstatSync(file).isFile()) return;
+  } catch (e) {
+    if (e.code !== 'ENOENT') return;
+  }
+  const text = readText(file) ?? '';
+  if (text.split(/\r?\n/).some((l) => l.trim() === line)) return;
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`);
 }
 
 export function writeJson(file, data) {

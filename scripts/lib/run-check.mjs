@@ -18,12 +18,29 @@ const timer = setTimeout(() => {
   process.exit(124);
 }, ms);
 
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(signal, () => {
+    stopAll();
+    process.exit(130);
+  });
+}
+
+const parent = process.ppid;
+const watch = setInterval(() => {
+  if (process.ppid !== parent) {
+    stopAll();
+    process.exit(1);
+  }
+}, 1000);
+
 child.on('error', (e) => {
   clearTimeout(timer);
+  clearInterval(watch);
   process.stderr.write(`phaseproof: ${e.message}\n`);
   process.exit(1);
 });
 child.on('exit', (code) => {
   clearTimeout(timer);
+  clearInterval(watch);
   process.exit(code ?? 1);
 });
