@@ -1,4 +1,4 @@
-const VERDICT = /^\s*VERDICT:\s*(PASS|FAIL)[a-z]*\b/i;
+const VERDICT = /^\s*VERDICT:\s*(PASS|FAIL)\w*/i;
 const TEMPLATE = /^\s*VERDICT:\s*PASS\s*\|\s*FAIL\s*$/i;
 const BLOCKER = /^\s*(?:[-*+]|\d+[.)])\s*\[blocker\]/i;
 const plain = (line) => line.replace(/\*\*|__|`/g, '');

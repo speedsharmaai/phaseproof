@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { decide } from '../scripts/lib/decide.mjs';
 import { runChecks } from '../scripts/lib/checks.mjs';
@@ -305,4 +305,33 @@ test('a write through a symlink is judged by where it lands, even if the target 
 
 test('verdict: FAILURE and FAILS count as FAIL', () => {
   for (const word of ['FAILURE', 'FAILS', 'failing']) assert.equal(parseVerdict(`VERDICT: ${word}\nVERDICT: PASS\n`).pass, false, word);
+});
+
+test('a .phaseproof record linked to a file outside the project is still refused', { skip: process.platform === 'win32' }, (t) => {
+  const root = approvedProject(t);
+  const outside = tempProject(t);
+  symlinkSync(join(outside, 'g.json'), join(root, '.phaseproof/gates/phase-01.json'));
+  assert.equal(write(root, '.phaseproof/gates/phase-01.json').allow, false);
+});
+
+test('a doc hard-linked to a code file is judged as code', { skip: process.platform === 'win32' }, (t) => {
+  const root = tempProject(t);
+  cli(root, 'init');
+  put(root, 'src/a.js', '1\n');
+  mkdirSync(join(root, 'docs'), { recursive: true });
+  linkSync(join(root, 'src/a.js'), join(root, 'docs/notes.md'));
+  assert.equal(write(root, 'docs/notes.md').allow, false);
+  put(root, 'docs/plain.md', '# x\n');
+  assert.equal(write(root, 'docs/plain.md').allow, true);
+});
+
+test('review files must be saved under their exact lower-case name', (t) => {
+  const root = approvedProject(t);
+  assert.equal(write(root, '.phaseproof/reviews/phase-01-code.md').allow, true);
+  assert.equal(write(root, '.phaseproof/reviews/Phase-01-CODE.md').allow, false);
+  assert.equal(write(root, '.phaseproof/config.json').allow, true);
+});
+
+test('verdict: FAIL_BLOCKERS and FAIL2 count as FAIL', () => {
+  for (const word of ['FAIL_BLOCKERS', 'FAIL2']) assert.equal(parseVerdict(`VERDICT: ${word}\nVERDICT: PASS\n`).pass, false, word);
 });

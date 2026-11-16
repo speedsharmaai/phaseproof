@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
@@ -27,7 +27,7 @@ export { toProjectPath };
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const PROTECTED_IN_BASH = /\.phaseproof[. ]*[\\/]+(gates|approvals|runs|blocks)\b|phasep~\d+[\\/]+(gates|approvals|runs|blocks)\b/iu;
 const APPROVE_IN_BASH = /phaseproof\.mjs["']?\s+approve\b/iu;
-const WRITABLE_STATE = ['.phaseproof/reviews/', '.phaseproof/config.json'];
+const WRITABLE_STATE = [/^\.phaseproof\/reviews\/[a-z0-9._-]+$/, /^\.phaseproof\/config\.json$/];
 
 const allow = { allow: true };
 const deny = (reason) => ({ allow: false, reason: `phaseproof: ${reason}` });
@@ -51,23 +51,32 @@ export function decide({ root, toolName, toolInput = {} }) {
   const file = toolInput.file_path ?? toolInput.notebook_path;
   if (!file) return allow;
   const typed = toProjectPath(root, String(file));
-  const rel = toProjectPath(root, writeTarget(root, String(file)));
-  if (!rel) return allow;
-
-  if (inStateDir(rel) || (typed && inStateDir(typed))) {
-    if (typed === rel && WRITABLE_STATE.some((p) => rel === p || rel.startsWith(p))) return allow;
-    return deny(`${rel} is written by the phaseproof script, not by hand.`);
+  const target = writeTarget(root, String(file));
+  const rel = toProjectPath(root, target);
+  if ((rel && inStateDir(rel)) || (typed && inStateDir(typed))) {
+    if (typed === rel && WRITABLE_STATE.some((p) => p.test(rel))) return allow;
+    return deny(`${rel ?? typed} is written by the phaseproof script, not by hand.`);
   }
+  if (!rel) return allow;
 
   const locked = lockedReason(root, rel);
   if (locked !== undefined) return locked ? deny(locked) : allow;
 
   const phase = currentPhase(root);
   const docPaths = phase && configChanged(root, phase) ? DEFAULT_CONFIG.docPaths : loadConfig(root).docPaths;
-  if (isDoc(rel, docPaths)) return allow;
+  if (isDoc(rel, docPaths) && !hardLinked(target)) return allow;
 
   const reason = closedReason(root);
   return reason ? deny(reason) : allow;
+}
+
+function hardLinked(path) {
+  try {
+    const st = lstatSync(path);
+    return st.isFile() && st.nlink > 1;
+  } catch {
+    return false;
+  }
 }
 
 const listsPath = (root, paths, rel) => paths.some((p) => samePath(toProjectPath(root, p) ?? '', rel));
