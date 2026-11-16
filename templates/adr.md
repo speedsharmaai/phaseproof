@@ -2,6 +2,8 @@
 
 **Status:** Accepted · <date>
 
+**Applies to:** <files or folders this decision governs, e.g. src/session/, or none>
+
 ## Context
 
 <What forces the decision. Facts, numbers, constraints.>

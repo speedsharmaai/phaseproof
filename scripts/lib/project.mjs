@@ -52,7 +52,7 @@ export function toProjectPath(root, file) {
 }
 
 const nfc = (s) => s.normalize('NFC');
-const fold = (s) => nfc(s).toUpperCase().toLowerCase();
+export const fold = (s) => nfc(s).toUpperCase().toLowerCase();
 export const samePath = (a, b) => fold(a) === fold(b);
 
 const stateDirName = (segment) => {

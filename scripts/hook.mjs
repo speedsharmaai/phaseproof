@@ -1,4 +1,5 @@
 import { closedReason, decide } from './lib/decide.mjs';
+import { boundNote } from './lib/facts.mjs';
 import { isMain } from './lib/main.mjs';
 import { findRoot, isActive } from './lib/project.mjs';
 import { snapshot } from './lib/shell.mjs';
@@ -12,7 +13,8 @@ export function respond(raw, projectDir = process.env.CLAUDE_PROJECT_DIR) {
       if (input.tool_name === 'Bash' && isActive(root) && closedReason(root)) {
         snapshot(root, input.tool_use_id, { background: Boolean(input.tool_input?.run_in_background) });
       }
-      return '';
+      const note = isActive(root) ? boundNote(root, input) : null;
+      return note ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: note } }) : '';
     }
     return JSON.stringify({
       hookSpecificOutput: {

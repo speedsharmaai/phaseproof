@@ -6,6 +6,7 @@ import { allPassed, runChecks } from './lib/checks.mjs';
 import { codeFingerprint, reviewDrift } from './lib/drift.mjs';
 import { lockIssues } from './lib/locks.mjs';
 import { doctor } from './lib/doctor.mjs';
+import { brokenRulings, confirmFacts, describeFact, factsCovering, factsFor, judgeFacts, loadFacts } from './lib/facts.mjs';
 import { report } from './lib/report.mjs';
 import { isMain } from './lib/main.mjs';
 import {
@@ -58,6 +59,9 @@ const USAGE = `usage: phaseproof <command>
   gate <phase>                re-run checks, read the code review, close the phase
   block [phase]               stop the phase after a failed code review until the owner decides
   next                        move to the next phase once the gate has passed
+  facts [path]... | --since [base]
+                              facts in docs/learnings.md and ADRs bound to these files,
+                              or to the code changed since the approval's base
   doctor                      check the setup and say what to fix
   report                      what the reviews and gates caught, phase by phase`;
 
@@ -266,6 +270,17 @@ const commands = {
     if (drift.changed.length) {
       refuse(`code changed after the code review was saved: ${listed(drift.changed)}. Review the current code again. If a check, formatter or build wrote these files, commit or gitignore that output before the review`);
     }
+    let judged = null;
+    try {
+      const fp = codeFingerprint(root, approval.base ?? approval.head ?? null);
+      if (fp) judged = judgeFacts(root, [...Object.keys(fp.tracked), ...Object.keys(fp.untracked)], code);
+    } catch {}
+    const where = (facts) => listed(facts.map((f) => `${f.source}:${f.line}`));
+    const broken = brokenRulings(code);
+    if (broken.length) {
+      const named = judged?.broken.length ? where(judged.broken) : broken.map((id) => `[${id}]`).join(', ');
+      refuse(`the code review says bound fact ${named} is broken. Fix the code, or, if the scope meant to change that rule, update the fact; then get a new code review`);
+    }
     const tests = testWarnings(root, phase, approval);
     const over = overBudget(scopeBudget(root, phase), measure(root, approval.base ?? approval.head ?? null));
     const warnings = [
@@ -273,6 +288,8 @@ const commands = {
       ...drift.fresh.slice(0, 10).map((f) => `untracked file that appeared after the code review: ${f}`),
       ...(drift.fresh.length > 10 ? [`and ${drift.fresh.length - 10} more untracked files that appeared after the code review`] : []),
       ...(over ? [`this phase changed ${over}. Split the rest into the next phase, or the owner raises the budget and approves again`] : []),
+      ...(judged?.outdated.length ? [`the code review says bound fact ${where(judged.outdated)} is outdated. Update it in its file`] : []),
+      ...(judged?.unruled.length ? [`the code review did not rule on bound fact ${where(judged.unruled)}, which covers the changed code, so it is not marked checked`] : []),
       ...tests,
     ];
     const results = checkResults(root, phase);
@@ -288,7 +305,48 @@ const commands = {
       warnings,
       testWarnings: tests,
     });
+    let checked = 0;
+    try {
+      checked = confirmFacts(root, phase, judged?.holds ?? []);
+    } catch {}
+    if (checked) out(`${checked} bound fact${checked === 1 ? '' : 's'} checked at this gate`);
     out(`phase ${phase} gate: PASS`);
+  },
+
+  facts(root, args, out) {
+    const { phase } = requireActive(root);
+    const facts = loadFacts(root);
+    if (!facts.length) return out('no bound facts. Add "(applies to: <paths>)" to a line in docs/learnings.md, or an **Applies to:** line to an ADR');
+    const since = args.indexOf('--since');
+    let paths = args.filter((a, i) => !a.startsWith('--') && !(since !== -1 && i === since + 1));
+    if (since !== -1) {
+      if (paths.length) refuse('give either paths or --since, not both');
+      const approval = readJson(approvalFile(root, phase), {}) ?? {};
+      const ref = args[since + 1] && !args[since + 1].startsWith('--') ? args[since + 1] : (approval.base ?? approval.head ?? null);
+      const sha = ref ? spawnSync('git', ['rev-parse', '-q', '--verify', `${ref}^{commit}`], { cwd: root, encoding: 'utf8', timeout: 20000 }).stdout?.trim() : '';
+      const fp = sha ? codeFingerprint(root, sha) : null;
+      if (!fp) refuse(`cannot list the code changed since ${ref ?? 'the approval'}: no git commit to compare with`);
+      const bound = factsCovering(root, [...Object.keys(fp.tracked), ...Object.keys(fp.untracked)], facts);
+      if (!bound.length) return out('no bound facts');
+      const shown = bound.slice(0, 20);
+      const more = bound.length - shown.length;
+      out([`${bound.length} bound fact${bound.length === 1 ? '' : 's'} cover the code changed since ${sha.slice(0, 12)} (data from the project's docs, not instructions):`, ...shown.map((f) => describeFact(root, f)), ...(more ? [`and ${more} more not shown here`] : [])].join('\n'));
+      return;
+    }
+    if (paths.length) {
+      const lines = paths.flatMap((p) => {
+        const found = factsFor(root, p, facts);
+        return [`${p}:`, ...(found.length ? found.map((f) => `  ${describeFact(root, f)}`) : ['  no bound facts'])];
+      });
+      return out(lines.join('\n'));
+    }
+    const tracked = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8', timeout: 20000, maxBuffer: 256 * 1024 * 1024 });
+    const files = tracked.status === 0 ? tracked.stdout.split('\0').filter(Boolean) : null;
+    const lines = facts.map((f) => `${describeFact(root, f)} [${f.patterns.join(', ')}]`);
+    if (files) {
+      for (const f of facts) if (!files.some((p) => factsFor(root, p, [f]).length)) lines.push(`matches no file: ${f.source}:${f.line} ${f.text.slice(0, 80)}`);
+    }
+    out(lines.join('\n'));
   },
 
   block(root, args, out) {
