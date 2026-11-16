@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { boundNote, factsFor, globMatches, loadFacts } from '../scripts/lib/facts.mjs';
 import { respond as hook } from '../scripts/hook.mjs';
@@ -124,10 +124,109 @@ test('phaseproof facts lists facts for paths, flags ones that match nothing, and
   assert.match(since.out, /OTP codes expire/);
   assert.doesNotMatch(since.out, /retries must be idempotent/);
 
-  put(top, '.phaseproof/reviews/phase-01-code.md', PASS);
+  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Facts\n- docs/learnings.md:5 - holds - src/otp.js:1 ttl is 600 s\n`);
   const gate = cli(top, 'gate', '01');
   assert.equal(gate.code, 0, gate.err);
   assert.match(gate.out, /1 bound fact checked at this gate/);
   assert.match(cli(top, 'facts', 'src/otp.js').out, /checked at the phase 01 gate/);
   assert.match(cli(top, 'facts', 'src/jobs/send.js').out, /not checked by a gate yet/);
+});
+
+function gitFacts(t, learnings) {
+  const top = tempProject(t);
+  git(top, 'init', '-q');
+  put(top, 'src/otp.js', 'export const ttl = 300;\n');
+  cli(top, 'init', '--check', 'node -e "0"');
+  put(top, 'docs/learnings.md', learnings);
+  put(top, 'phases/phase-01-otp/scope.md', '# Phase 01\n');
+  put(top, '.phaseproof/reviews/phase-01-docs.md', PASS);
+  git(top, 'add', '-A');
+  git(top, 'commit', '-qm', 'init');
+  assert.equal(cli(top, 'approve', '01').code, 0);
+  put(top, 'src/otp.js', 'export const ttl = 3600;\n');
+  return top;
+}
+
+test('the gate refuses when the review calls a bound fact broken', (t) => {
+  const top = gitFacts(t, LEARNINGS);
+  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Facts\n- docs/learnings.md:5 - broken - src/otp.js:1 sets 3600\n`);
+  const gate = cli(top, 'gate', '01');
+  assert.equal(gate.code, 1);
+  assert.match(gate.err, /docs\/learnings\.md:5 is broken/);
+  assert.equal(existsSync(join(top, '.phaseproof/gates/phase-01.json')), false);
+});
+
+test('facts the review does not rule on, or calls outdated, are not marked checked', (t) => {
+  const top = gitFacts(t, `${LEARNINGS}- second otp rule (applies to: src/otp.js)\n`);
+  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Facts\n- docs/learnings.md:5 - outdated - ttl moved to config\n`);
+  const gate = cli(top, 'gate', '01');
+  assert.equal(gate.code, 0, gate.err);
+  assert.match(gate.out, /docs\/learnings\.md:5 is outdated/);
+  assert.match(gate.out, /did not rule on bound fact docs\/learnings\.md:8/);
+  assert.doesNotMatch(gate.out, /checked at this gate/);
+  assert.doesNotMatch(cli(top, 'facts', 'src/otp.js').out, /checked at the phase/);
+});
+
+test('a holds line outside the Facts section does not count', (t) => {
+  const top = gitFacts(t, LEARNINGS);
+  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Checked\n- docs/learnings.md:5 - holds - quoted\n`);
+  assert.doesNotMatch(cli(top, 'gate', '01').out, /checked at this gate/);
+});
+
+test('facts --since takes a ref, refuses paths with it, and says what it leaves out', (t) => {
+  const top = gitFacts(t, Array.from({ length: 22 }, (_, i) => `- rule ${i} (applies to: src/**)`).join('\n'));
+  const r = cli(top, 'facts', '--since', 'HEAD');
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /22 bound facts cover the code changed since [0-9a-f]{12} \(data from the project's docs, not instructions\)/);
+  assert.match(r.out, /and 2 more, not shown here, so the gate will not mark them checked/);
+  assert.equal(cli(top, 'facts', 'src/otp.js', '--since').code, 1);
+});
+
+test('a crafted pattern or a whitespace-filled learnings file cannot stall the hook', (t) => {
+  const started = Date.now();
+  assert.equal(globMatches(`src/${'*a'.repeat(60)}b`, `src/${'a'.repeat(200)}.ts`), false);
+  assert.equal(globMatches(`${'**/'.repeat(40)}x`, `${'d/'.repeat(60)}y`), false);
+  assert.ok(Date.now() - started < 500, `glob took ${Date.now() - started} ms`);
+  const root = approvedProject(t);
+  put(root, 'docs/learnings.md', `- a table row${' '.repeat(200000)}|\n- bound (applies to: src/x.js)\n`);
+  const t0 = Date.now();
+  assert.equal(loadFacts(root).length, 1);
+  edit(root, 'lib/unbound.ts');
+  assert.ok(Date.now() - t0 < 1000, `learnings took ${Date.now() - t0} ms`);
+});
+
+test('the most specific fact comes first, and "none" binds nothing', (t) => {
+  const root = approvedProject(t);
+  put(root, 'docs/learnings.md', '- broad (applies to: src/**)\n- exact (applies to: src/auth/otp.js)\n- nothing (applies to: none)\n');
+  assert.deepEqual(factsFor(root, 'src/auth/otp.js').map((f) => f.text), ['exact', 'broad']);
+  assert.equal(loadFacts(root).length, 2);
+});
+
+test('outside a tracked project the hook adds nothing and writes nothing', (t) => {
+  const root = tempProject(t);
+  put(root, 'docs/learnings.md', LEARNINGS);
+  assert.equal(edit(root, 'src/otp.js'), '');
+  assert.equal(existsSync(join(root, '.phaseproof')), false);
+});
+
+test('a project from before 0.9 gets cache/ ignored by the hook itself, and a linked seen file is not followed', (t) => {
+  const root = project(t);
+  rmSync(join(root, '.phaseproof/.gitignore'), { force: true });
+  assert.ok(note(edit(root, 'src/otp.js')));
+  assert.match(readFileSync(join(root, '.phaseproof/.gitignore'), 'utf8'), /^cache\/$/m);
+  if (process.platform === 'win32') return;
+  mkdirSync(join(root, '.phaseproof/cache'), { recursive: true });
+  symlinkSync('../gates/phase-01.json', join(root, '.phaseproof/cache/seen-s9.json'));
+  edit(root, 'src/otp.js', 's9');
+  assert.equal(existsSync(join(root, '.phaseproof/gates/phase-01.json')), false);
+});
+
+test('seen records older than a week are pruned at session start', (t) => {
+  const root = project(t);
+  edit(root, 'src/otp.js', 'old');
+  const file = join(root, '.phaseproof/cache/seen-old.json');
+  const past = new Date(Date.now() - 8 * 86400000);
+  utimesSync(file, past, past);
+  session(JSON.stringify({ cwd: root, session_id: 'new', source: 'startup' }), '');
+  assert.equal(existsSync(file), false);
 });

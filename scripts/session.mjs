@@ -2,7 +2,7 @@ import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { closedReason } from './lib/decide.mjs';
 import { lastEdit } from './lib/edits.mjs';
-import { forgetSeen } from './lib/facts.mjs';
+import { forgetSeen, pruneSeen } from './lib/facts.mjs';
 import { isMain } from './lib/main.mjs';
 import { approvalFile, blockFile, findRoot, gateFile, isActive, loadState, lockedTests, phaseDir, readJson, readText, reviewFile, runFile, scopeField, scopeText, visibleText } from './lib/project.mjs';
 import { parseVerdict } from './lib/verdict.mjs';
@@ -101,7 +101,10 @@ export function respond(raw, projectDir = process.env.CLAUDE_PROJECT_DIR) {
   try {
     const input = JSON.parse(raw);
     const root = findRoot(projectDir || input.cwd);
-    if ((input.source === 'compact' || input.source === 'clear') && isActive(root)) forgetSeen(root, input.session_id);
+    if (isActive(root)) {
+      if (input.source === 'compact' || input.source === 'clear') forgetSeen(root, input.session_id);
+      pruneSeen(root);
+    }
     const text = context(root);
     return text ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } }) : '';
   } catch {

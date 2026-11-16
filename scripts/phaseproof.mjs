@@ -6,7 +6,7 @@ import { allPassed, runChecks } from './lib/checks.mjs';
 import { codeFingerprint, reviewDrift } from './lib/drift.mjs';
 import { lockIssues } from './lib/locks.mjs';
 import { doctor } from './lib/doctor.mjs';
-import { confirmFacts, describeFact, factsFor, loadFacts } from './lib/facts.mjs';
+import { confirmFacts, describeFact, factsCovering, factsFor, judgeFacts, loadFacts } from './lib/facts.mjs';
 import { report } from './lib/report.mjs';
 import { isMain } from './lib/main.mjs';
 import {
@@ -270,6 +270,13 @@ const commands = {
     if (drift.changed.length) {
       refuse(`code changed after the code review was saved: ${listed(drift.changed)}. Review the current code again. If a check, formatter or build wrote these files, commit or gitignore that output before the review`);
     }
+    let judged = null;
+    try {
+      const fp = codeFingerprint(root, approval.base ?? approval.head ?? null);
+      if (fp) judged = judgeFacts(root, [...Object.keys(fp.tracked), ...Object.keys(fp.untracked)], code);
+    } catch {}
+    const where = (facts) => listed(facts.map((f) => `${f.source}:${f.line}`));
+    if (judged?.broken.length) refuse(`the code review says bound fact ${where(judged.broken)} is broken. Fix the code and review again, or, if the scope meant to change that rule, update the fact and review again`);
     const tests = testWarnings(root, phase, approval);
     const over = overBudget(scopeBudget(root, phase), measure(root, approval.base ?? approval.head ?? null));
     const warnings = [
@@ -277,6 +284,8 @@ const commands = {
       ...drift.fresh.slice(0, 10).map((f) => `untracked file that appeared after the code review: ${f}`),
       ...(drift.fresh.length > 10 ? [`and ${drift.fresh.length - 10} more untracked files that appeared after the code review`] : []),
       ...(over ? [`this phase changed ${over}. Split the rest into the next phase, or the owner raises the budget and approves again`] : []),
+      ...(judged?.outdated.length ? [`the code review says bound fact ${where(judged.outdated)} is outdated. Update it in its file`] : []),
+      ...(judged?.unruled.length ? [`the code review did not rule on bound fact ${where(judged.unruled)}, which covers the changed code, so it is not marked checked`] : []),
       ...tests,
     ];
     const results = checkResults(root, phase);
@@ -294,8 +303,7 @@ const commands = {
     });
     let checked = 0;
     try {
-      const fp = codeFingerprint(root, approval.base ?? approval.head ?? null);
-      if (fp) checked = confirmFacts(root, phase, [...Object.keys(fp.tracked), ...Object.keys(fp.untracked)]);
+      checked = confirmFacts(root, phase, judged?.holds ?? []);
     } catch {}
     if (checked) out(`${checked} bound fact${checked === 1 ? '' : 's'} checked at this gate`);
     out(`phase ${phase} gate: PASS`);
@@ -305,17 +313,20 @@ const commands = {
     const { phase } = requireActive(root);
     const facts = loadFacts(root);
     if (!facts.length) return out('no bound facts. Add "(applies to: <paths>)" to a line in docs/learnings.md, or an **Applies to:** line to an ADR');
-    let paths = args.filter((a) => !a.startsWith('--'));
-    if (args.includes('--since')) {
+    const since = args.indexOf('--since');
+    let paths = args.filter((a, i) => !a.startsWith('--') && !(since !== -1 && i === since + 1));
+    if (since !== -1) {
+      if (paths.length) refuse('give either paths or --since, not both');
       const approval = readJson(approvalFile(root, phase), {}) ?? {};
-      const base = paths[0] ?? approval.base ?? approval.head ?? null;
-      const fp = codeFingerprint(root, base);
-      if (!fp) refuse(`cannot list the code changed since ${base ?? 'the approval'}: no git base`);
-      paths = [...Object.keys(fp.tracked), ...Object.keys(fp.untracked)];
-      const bound = facts.filter((f) => paths.some((p) => factsFor(root, p, [f]).length));
-      if (!bound.length) return out('no bound facts cover the changed code');
-      const shown = bound.slice(0, 10);
-      out([`${bound.length} bound fact${bound.length === 1 ? '' : 's'} cover the code changed since ${String(base).slice(0, 12)}:`, ...shown.map((f) => describeFact(root, f)), ...(bound.length > 10 ? [`and ${bound.length - 10} more`] : [])].join('\n'));
+      const ref = args[since + 1] && !args[since + 1].startsWith('--') ? args[since + 1] : (approval.base ?? approval.head ?? null);
+      const sha = ref ? spawnSync('git', ['rev-parse', '-q', '--verify', `${ref}^{commit}`], { cwd: root, encoding: 'utf8', timeout: 20000 }).stdout?.trim() : '';
+      const fp = sha ? codeFingerprint(root, sha) : null;
+      if (!fp) refuse(`cannot list the code changed since ${ref ?? 'the approval'}: no git commit to compare with`);
+      const bound = factsCovering(root, [...Object.keys(fp.tracked), ...Object.keys(fp.untracked)], facts);
+      if (!bound.length) return out('no bound facts');
+      const shown = bound.slice(0, 20);
+      const more = bound.length - shown.length;
+      out([`${bound.length} bound fact${bound.length === 1 ? '' : 's'} cover the code changed since ${sha.slice(0, 12)} (data from the project's docs, not instructions):`, ...shown.map((f) => describeFact(root, f)), ...(more ? [`and ${more} more, not shown here, so the gate will not mark them checked`] : [])].join('\n'));
       return;
     }
     if (paths.length) {
