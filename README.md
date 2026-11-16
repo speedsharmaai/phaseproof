@@ -60,6 +60,7 @@ phaseproof is the process I ran by hand across a dozen shipped projects, packed 
 4. **Checks are re-run, not trusted.** The gate script runs your test and typecheck commands itself before it closes a phase, refuses if the commands you approved were changed, and refuses if code changed after the code review was saved.
 5. **Tests can be locked.** Acceptance tests written with the plan and listed under **Locked tests:** are approved with it. After that the builder has to make them pass instead of editing them.
 6. **Ship with proof.** New build on a spare port, health check, swap, keyword check on the live URL, rollback written down.
+7. **Lessons come back when they matter.** A lesson that says which files it is about is put in front of Claude when it edits those files. The code reviewer is asked to rule on each one: a fact it calls broken refuses the gate, and one it skips is a gate warning. After `/compact`, the open blockers and the failing check come back too.
 
 ## How a phase flows
 
@@ -85,6 +86,8 @@ phaseproof is the process I ran by hand across a dozen shipped projects, packed 
 | `/phaseproof:status` | Where the phase stands and the one next step |
 | `/phaseproof:doctor` | Checks Node, git, config, checks, phase folder, locked tests and approval, and says what to fix |
 | `/phaseproof:report` | What the reviews and gates caught, phase by phase: review rounds, failed reviews, blockers, gate warnings |
+
+The script behind the skills has one more command you can run yourself, `node ${CLAUDE_PLUGIN_ROOT}/scripts/phaseproof.mjs facts [path]...`. It lists the facts bound to files, the facts for a path, or with `--since [ref]` the facts that cover the code changed since the approval, and names facts whose paths match no file.
 
 ## Model routing
 
@@ -177,24 +180,28 @@ your-project/
     ├── state.json                current phase
     ├── reviews/                  reviewer reports, verbatim
     ├── approvals/                owner sign-offs
-    ├── runs/                     last check results, what code the review saw, review history
+    ├── runs/                     last check results, what code the review saw, review history, facts checked at gates
     ├── blocks/                   phases stopped after two failed reviews
-    └── gates/                    closed phases, with check results and review hashes
+    ├── gates/                    closed phases, with check results and review hashes
+    ├── cache/                    per-session state (facts shown, time of the last code edit), gitignored
+    ├── .gitignore                keeps cache/ out of git
+    └── .gitattributes            union merge for the review history
 ```
 
-Commit `.phaseproof/` with the code. The approvals and gates are the audit trail.
+Commit `.phaseproof/` with the code, except `cache/`. The approvals and gates are the audit trail.
 
 ## What it runs and sends
 
 - `scripts/stop.mjs` runs when Claude finishes a turn. It reads `.phaseproof/` and, if the last check run failed, runs the same read-only git commands as the review record to see whether code changed since. When it asks Claude to continue, it writes which check run it asked about to `.phaseproof/runs/`.
-- `scripts/session.mjs` runs at session start and after compact, clear or resume. It reads `.phaseproof/` and `phases/` and prints a short status for Claude; it writes nothing.
-- The hook runs `node ${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs` before file edits and Bash calls. It reads files under `.phaseproof/` in your project and prints an allow or deny decision. It makes no network calls.
+- `scripts/session.mjs` runs at session start and after compact, clear, resume or fork. It reads `.phaseproof/`, `phases/` and `docs/` and prints a short status for Claude. It runs no git. The only thing it writes is cleanup in `.phaseproof/cache/`: the facts already shown are forgotten after a compact or clear, and session records older than a week are removed.
+- The hook runs `node ${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs` before file edits and Bash calls. It reads files under `.phaseproof/`, the current phase's scope and locked tests, `docs/learnings.md` and `docs/decisions/` in your project, and prints an allow or deny decision, plus any facts bound to the file being edited. To tell whether a locked test is already committed it runs `git ls-tree` and `git rev-parse`. When it shows facts it records their ids for the session in `.phaseproof/cache/`, and adds `cache/` to `.phaseproof/.gitignore` if it is missing. It makes no network calls.
+- After a Write or Edit to a code file, `scripts/post.mjs` writes the time, the file's path and its modification time to `.phaseproof/cache/last-edit.json` (adding `cache/` to `.phaseproof/.gitignore` if needed), so the session status can say a review is older than the code.
 - After a Write or Edit to any review in `.phaseproof/reviews/`, `scripts/post.mjs` appends one line to `.phaseproof/runs/reviews.jsonl`: the phase, the kind of review, its verdict, the number of blockers, the time and a hash of the review. `report` reads it. If branches that both saved reviews get merged, the `merge=union` rule that `init` and `approve` write to `.phaseproof/.gitattributes` keeps both sides.
 - `doctor` only reads: it runs `git --version`, `rev-parse`, `cat-file -e`, `check-ignore --no-index` and `ls-files --others`, and reads `.phaseproof/`, `phases/` and the plugin's own `hooks/hooks.json`.
 - After a Write or Edit to `.phaseproof/reviews/phase-NN-code.md`, `scripts/post.mjs` runs `git diff --name-only`, `git ls-files --others` and `git hash-object --stdin-paths` (without writing objects) and records paths and hashes, no file contents, in `.phaseproof/runs/`. For any other file it does nothing.
 - While code is closed, `scripts/hook.mjs` and `scripts/post.mjs` run `git status`, `git rev-parse` and `git diff --name-only` around Bash calls to find shell writes to code. They write only short-lived records to `phaseproof/` inside the git directory (`.git/phaseproof/`, or the worktree's or submodule's own git dir), holding paths, sizes and hashes but no file contents, and never change your files.
 - At gate time the test guard runs read-only git commands (`ls-tree`, `ls-files`, `diff -M`, and `hash-object --stdin-paths` without writing) to compare test files with the approval. It writes nothing to your repository.
-- `scripts/phaseproof.mjs` reads and writes files under `.phaseproof/`, and runs `git rev-parse HEAD` to record the commit.
+- `scripts/phaseproof.mjs` reads and writes files under `.phaseproof/`, and runs `git rev-parse HEAD` to record the commit. `facts` runs `git ls-files` and, with `--since`, `git rev-parse --verify` and the same read-only git commands as the review record.
 - `check` and `gate` run the commands you list in `.phaseproof/config.json` (your tests, typecheck, lint) through your shell, in your project directory. Nothing else is executed.
 - No telemetry, no data leaves your machine, no packages are downloaded. The researcher and ship-verifier agents use Claude's own WebSearch and WebFetch tools when a skill asks them to.
 
@@ -209,7 +216,7 @@ No server, no telemetry, nothing collected. See [PRIVACY.md](PRIVACY.md).
 
 ## Status
 
-v0.7.0. The gate script, the hook and their tests are done. The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
+v0.9.1. The gate script, the hooks and their tests are done (about 240 tests on Linux, macOS and Windows). The skills and agents are new and will change as they get used on real projects. Issues and PRs are welcome.
 
 ## Related projects
 
