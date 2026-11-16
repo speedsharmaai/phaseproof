@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.1 - 2026-11-16
+
+- README: the Why list covers facts bound to files and what comes back after a compact; the `facts` command is documented; "What it writes" shows `cache/`, `.gitignore` and `.gitattributes`; "What it runs and sends" now lists what the hooks read, run and write
+- `facts --since` says "1 bound fact covers", not "cover"
+- CI actions bumped: CodeQL 4.39.3, Scorecard 2.5.0, semantic-pull-request 6.1.2
+
 ## 0.9.0 - 2026-11-16
 
 - Facts bound to files: a lesson in `docs/learnings.md` ending with `(applies to: <paths>)`, or an ADR with an `**Applies to:**` line, is shown to Claude along with its edit to one of those files, with its source line and whether a gate has checked it. Claude reads it right after the call, so it can correct a change that breaks the fact. The hook only adds context, never decides a permission, and adds nothing to a refused edit

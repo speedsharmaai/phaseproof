@@ -317,3 +317,8 @@ test('broken anywhere in a ruling line wins, and only the template shape is skip
   assert.equal(rulings('## Facts\n### Auth\n- [0123456789] holds\n## Findings\n- [1123456789] holds\n').get('0123456789'), 'holds');
   assert.equal(rulings('## Facts\n### Auth\n- [0123456789] holds\n## Findings\n- [1123456789] holds\n').has('1123456789'), false);
 });
+
+test('facts --since says "covers" for one fact', (t) => {
+  const top = gitFacts(t, LEARNINGS);
+  assert.match(cli(top, 'facts', '--since').out, /^1 bound fact covers the code changed since/);
+});
