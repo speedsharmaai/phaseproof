@@ -2,7 +2,7 @@
 
 ## 0.9.1 - 2026-11-16
 
-- README: the Why list covers facts bound to files and what comes back after a compact; the `facts` command is documented; "What it writes" shows `cache/`, `.gitignore` and `.gitattributes`; "What it runs and sends" now lists everything each hook reads, runs and writes
+- README: the Why list covers facts bound to files and what comes back after a compact; the `facts` command is documented; "What it writes" shows `cache/`, `.gitignore` and `.gitattributes`; "What it runs and sends" now lists what the hooks read, run and write
 - `facts --since` says "1 bound fact covers", not "cover"
 - CI actions bumped: CodeQL 4.39.3, Scorecard 2.5.0, semantic-pull-request 6.1.2
 
