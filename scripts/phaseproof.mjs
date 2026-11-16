@@ -122,6 +122,7 @@ const UNION = 'runs/reviews.jsonl merge=union';
 
 function addUnionMerge(root) {
   ensureLine(ppPath(root, '.gitattributes'), UNION);
+  ensureLine(ppPath(root, '.gitignore'), 'cache/');
 }
 
 function requireReview(root, phase, kind) {

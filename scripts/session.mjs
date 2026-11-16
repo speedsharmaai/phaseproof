@@ -1,7 +1,7 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { closedReason } from './lib/decide.mjs';
-import { codeFingerprint, driftSince, isFingerprint, reviewRecordFile } from './lib/drift.mjs';
+import { lastEdit } from './lib/edits.mjs';
 import { isMain } from './lib/main.mjs';
 import { approvalFile, blockFile, findRoot, gateFile, isActive, loadState, lockedTests, phaseDir, readJson, readText, reviewFile, runFile, scopeField, scopeText, visibleText } from './lib/project.mjs';
 import { parseVerdict } from './lib/verdict.mjs';
@@ -28,22 +28,22 @@ function taskInProgress(tasks) {
   return null;
 }
 
-function changedSince(root, fingerprint, base, now) {
-  if (!isFingerprint(fingerprint) || typeof base !== 'string') return false;
-  if (!(base in now)) now[base] = codeFingerprint(root, base);
-  if (!now[base]) return false;
-  const { changed, fresh } = driftSince(fingerprint, now[base]);
-  return changed.length > 0 || fresh.length > 0;
-}
+const mtime = (file) => {
+  try {
+    return statSync(file).mtimeMs;
+  } catch {
+    return null;
+  }
+};
+const after = (edited, time) => edited !== null && Number.isFinite(time) && edited > time;
 
 export function records(root, phase) {
   if (!existsSync(approvalFile(root, phase)) || existsSync(gateFile(root, phase)) || closedReason(root)) return null;
   const lines = [];
-  const now = {};
+  const edited = lastEdit(root);
   const review = parseVerdict(readText(reviewFile(root, phase, 'code')));
   if (review.blockers.length) {
-    const record = readJson(reviewRecordFile(root, phase), null);
-    const later = changedSince(root, record?.fingerprint, record?.base, now) ? ' (the code changed after this review, so some may be fixed; the next review decides)' : '';
+    const later = after(edited, mtime(reviewFile(root, phase, 'code'))) ? ' (code was edited after this review, so some may be fixed; the next review decides)' : '';
     lines.push(`Blockers in the last code review, .phaseproof/reviews/phase-${phase}-code.md${later}:`);
     lines.push(...review.blockers.slice(0, 3).map((b) => `  ${clip(b.trim(), 200)}`));
     if (review.blockers.length > 3) lines.push(`  and ${review.blockers.length - 3} more`);
@@ -51,7 +51,7 @@ export function records(root, phase) {
   const run = readJson(runFile(root, phase), null);
   const failing = Array.isArray(run?.results) ? run.results.filter((r) => r && r.code !== 0) : [];
   if (failing.length) {
-    const later = changedSince(root, run.fingerprint, run.base, now) ? ' (the code changed after this run; run check again)' : '';
+    const later = after(edited, Date.parse(run.ranAt)) ? ' (code was edited after this run; run check again)' : '';
     lines.push(`Last check run failed${later}: ${failing.slice(0, 3).map((r) => clip(String(r.cmd), 120)).join(', ')}`);
     const tail = String(failing[0].tail ?? '').split('\n').filter((l) => l.trim()).slice(-5);
     lines.push(...tail.map((l) => `  ${clip(l, 160)}`));
@@ -89,7 +89,10 @@ export function context(root) {
   if (existsSync(join(root, 'docs', 'learnings.md'))) lines.push('Read docs/learnings.md before planning or reviewing; it lists mistakes earlier phases made.');
   lines.push('Run /phaseproof:status for details.');
   const base = cut(lines.join('\n'), MAX);
-  const extra = records(root, phase);
+  let extra = null;
+  try {
+    extra = records(root, phase);
+  } catch {}
   return extra ? `${base}\n${extra}` : base;
 }
 

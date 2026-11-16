@@ -2,7 +2,7 @@
 
 ## 0.8.0 - 2026-11-16
 
-- After `/compact`, a resume, a fork or a new session, phaseproof puts back where the phase stands, not only which phase it is: open blockers from the last code review, the failing check and its last lines, and the next unticked task. It is read from the phase records, clipped, labelled as data, and only added while a phase is building (not while it is blocked or its approval is stale). Blockers and a failed run are marked when the code changed after them
+- After `/compact`, a resume, a fork or a new session, phaseproof puts back where the phase stands, not only which phase it is: open blockers from the last code review, the failing check and its last lines, and the next unticked task. It is read from the phase records, clipped, labelled as data, and only added while a phase is building (not while it is blocked or its approval is stale). Blockers and a failed run are marked when code was edited with Write or Edit after them. SessionStart runs no git for this
 
 ## 0.7.1 - 2026-11-15
 

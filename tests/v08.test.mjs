@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { context, records } from '../scripts/session.mjs';
 import { respond as post } from '../scripts/post.mjs';
 import { approvedProject, cli, FAIL, PASS, put, tempProject } from './helpers.mjs';
@@ -73,18 +75,35 @@ function gitProject(t, check = 'node -e "process.exit(1)"') {
   return root;
 }
 
-test('blockers and a failing run say so when the code changed after them', (t) => {
+const saveWith = (root, rel, text) => post(JSON.stringify({ cwd: root, hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { file_path: put(root, rel, text) } }), root);
+
+test('blockers and a failing run say so when code was edited after them, without calling git', async (t) => {
   const root = gitProject(t);
-  put(root, 'src/a.js', '2\n');
+  saveWith(root, 'src/a.js', '2\n');
+  await new Promise((r) => setTimeout(r, 20));
   cli(root, 'check');
-  const file = put(root, '.phaseproof/reviews/phase-01-code.md', FAIL);
-  post(JSON.stringify({ cwd: root, hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { file_path: file } }), root);
+  saveWith(root, '.phaseproof/reviews/phase-01-code.md', FAIL);
   let c = context(root);
-  assert.doesNotMatch(c, /code changed after/);
-  put(root, 'src/a.js', '3\n');
+  assert.doesNotMatch(c, /edited after/);
+  await new Promise((r) => setTimeout(r, 20));
+  saveWith(root, 'src/a.js', '3\n');
+  saveWith(root, 'docs/notes.md', '# n\n');
   c = context(root);
-  assert.match(c, /code changed after this review/);
-  assert.match(c, /code changed after this run/);
+  assert.match(c, /code was edited after this review/);
+  assert.match(c, /code was edited after this run/);
+  assert.match(readFileSync(join(root, '.phaseproof/.gitignore'), 'utf8'), /^cache\/$/m);
+  const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'scripts', 'session.mjs')], { input: JSON.stringify({ cwd: root, source: 'compact' }), encoding: 'utf8', env: { ...process.env, PATH: '', CLAUDE_PROJECT_DIR: root } });
+  assert.match(JSON.parse(r.stdout).hookSpecificOutput.additionalContext, /code was edited after this review/);
+});
+
+test('a doc edit is not a code edit, and a broken run file cannot lose the base context', (t) => {
+  const root = gitProject(t);
+  cli(root, 'check');
+  put(root, '.phaseproof/reviews/phase-01-code.md', FAIL);
+  saveWith(root, 'docs/notes.md', '# n\n');
+  assert.doesNotMatch(context(root), /edited after/);
+  put(root, '.phaseproof/runs/phase-01-checks.json', JSON.stringify({ ranAt: 'x', base: 'constructor', results: [{ cmd: {}, code: 1, tail: {} }] }));
+  assert.match(context(root), /phaseproof is active/);
 });
 
 test('no task or blocker list while the phase is blocked or its approval is stale', (t) => {
@@ -109,17 +128,21 @@ test('nothing extra before the phase is approved', (t) => {
 test('each record line is clipped and the addition stays under 1,000 characters', (t) => {
   const root = approvedProject(t, [`node -e "console.error(('${'z'.repeat(400)}' + String.fromCharCode(10)).repeat(40)); process.exit(1)"`]);
   cli(root, 'check');
-  put(root, '.phaseproof/reviews/phase-01-code.md', `VERDICT: FAIL\n${`- [blocker] ${'b'.repeat(900)}\n`.repeat(10)}`);
   const r = records(root, '01');
   assert.ok(r.length < 1000, String(r.length));
   const tail = r.split('\n').filter((l) => /^ {2}z/.test(l));
   assert.ok(tail.length > 0 && tail.length <= 5, String(tail.length));
-  for (const line of r.split('\n')) assert.ok(line.length <= 205, String(line.length));
+  assert.equal(tail.length, 5);
+  for (const line of tail) assert.ok(line.length <= 162, String(line.length));
+  put(root, '.phaseproof/reviews/phase-01-code.md', `VERDICT: FAIL\n${`- [blocker] ${'b'.repeat(900)}\n`.repeat(10)}`);
+  const full = records(root, '01');
+  assert.ok(full.length < 1000, String(full.length));
+  for (const line of full.split('\n')) assert.ok(line.length <= 205, String(line.length));
 });
 
 test('a long line is never cut through the middle of an emoji', (t) => {
   const root = approvedProject(t);
-  put(root, '.phaseproof/reviews/phase-01-code.md', `VERDICT: FAIL\n- [blocker] ${'b'.repeat(184)}\u{1F680}\n`);
+  put(root, '.phaseproof/reviews/phase-01-code.md', `VERDICT: FAIL\n- [blocker] ${'b'.repeat(184)}\u{1F680}${'c'.repeat(50)}\n`);
   assert.doesNotMatch(records(root, '01'), /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
 });
 
@@ -128,4 +151,11 @@ test('tasks inside comments and code fences are not the task in progress', (t) =
   put(root, 'phases/phase-01-auth/tasks.md', `<!-- example:\n- [ ] <task>\n-->\n\`\`\`\n- [ ] fenced\n\`\`\`\n${TASKS}`);
   reapprove(root);
   assert.match(records(root, '01'), /Next open task in tasks\.md: 2 · Expiry: expire codes after 5 minutes/);
+});
+
+test('only the last five lines of a failing check are put back', (t) => {
+  const root = approvedProject(t, [`node -e "for (let i = 0; i < 40; i++) console.error('line ' + i); process.exit(1)"`]);
+  cli(root, 'check');
+  const tail = records(root, '01').split('\n').filter((l) => /^ {2}line \d+$/.test(l));
+  assert.deepEqual(tail, ['  line 35', '  line 36', '  line 37', '  line 38', '  line 39']);
 });
