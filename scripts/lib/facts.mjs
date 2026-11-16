@@ -146,15 +146,24 @@ const VERDICTS = ['broken', 'outdated', 'holds'];
 export function rulings(reviewText) {
   const out = new Map();
   let inFacts = false;
+  let level = 0;
   for (const raw of String(reviewText ?? '').replace(/\r/g, '').split('\n')) {
     const line = raw.replace(/\*\*|`/g, '');
-    if (/^#{1,6}\s/.test(line) || /^\s*facts\b[^a-z]*$/i.test(line)) inFacts = /^(?:#{1,6}\s+)?facts\b[^a-z]*$/i.test(line.trim());
+    const heading = /^(#{1,6})\s/.exec(line);
+    const isFacts = /^(?:#{1,6}\s+)?facts\b[^a-z]*$/i.test(line.trim());
+    if (isFacts) {
+      inFacts = true;
+      level = heading ? heading[1].length : 0;
+    } else if (heading && (level === 0 || heading[1].length <= level)) inFacts = false;
     if (!inFacts) continue;
     const loose = ANY_ID.exec(line);
+    if (!loose || /\((?:not checked by a gate yet|checked at the phase \d+ gate)\)\s*$/i.test(line)) continue;
+    const rest = line.slice(loose[0].length);
+    const template = /\b(?:holds|broken|outdated)\s*[|/]\s*(?:holds|broken|outdated)\b/i.test(rest);
     const m = RULING.exec(line);
-    const said = m ? m[2].toLowerCase() : loose && /\bbroken\b/i.test(line.slice(loose[0].length)) && !/\|/.test(line) ? 'broken' : null;
+    const said = template ? null : /\bbroken\b/i.test(rest) ? 'broken' : m ? m[2].toLowerCase() : null;
     if (!said) continue;
-    const id = (m ?? loose)[1].toLowerCase();
+    const id = loose[1].toLowerCase();
     const before = out.get(id);
     if (!before || VERDICTS.indexOf(said) < VERDICTS.indexOf(before)) out.set(id, said);
   }

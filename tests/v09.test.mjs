@@ -307,3 +307,13 @@ test('a broken ruling in another shape still counts as broken; holds stays stric
   assert.equal(rulings('## Facts\n- [3f9a1c2b7e] is fine and holds\n').size, 0);
   assert.equal(rulings('## Findings\n- [3f9a1c2b7e] broken\n').size, 0);
 });
+
+test('broken anywhere in a ruling line wins, and only the template shape is skipped', () => {
+  assert.equal(rulings('## Facts\n- [0123456789] holds for login, but broken in the refresh path\n').get('0123456789'), 'broken');
+  assert.equal(rulings('## Facts\n- [0123456789] outdated, and also broken in src/a.ts:3\n').get('0123456789'), 'broken');
+  assert.equal(rulings('## Facts\n1. [0123456789] is broken: a || b defaults\n').get('0123456789'), 'broken');
+  assert.equal(rulings('## Facts\n- [0123456789] holds / broken / outdated\n').size, 0);
+  assert.equal(rulings('## Facts\n- [0123456789] docs/learnings.md:2 \u2014 holds the lock (not checked by a gate yet)\n').size, 0);
+  assert.equal(rulings('## Facts\n### Auth\n- [0123456789] holds\n## Findings\n- [1123456789] holds\n').get('0123456789'), 'holds');
+  assert.equal(rulings('## Facts\n### Auth\n- [0123456789] holds\n## Findings\n- [1123456789] holds\n').has('1123456789'), false);
+});
