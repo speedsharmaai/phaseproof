@@ -294,3 +294,16 @@ test('changing an ADR decision makes it a new, unchecked fact', (t) => {
   put(root, 'docs/decisions/0002-sessions.md', ADR.replace('Postgres.\n', 'Redis after all.\n'));
   assert.notEqual(idOf(root, 'decision: 0002'), before);
 });
+
+test('a copied fact line that starts with a ruling word is not a ruling', () => {
+  assert.equal(rulings('## Facts\n- [3f9a1c2b7e] docs/learnings.md:2 holds the write lock until commit (not checked by a gate yet)\n').size, 0);
+  assert.equal(rulings('## Facts\n- [3f9a1c2b7e] docs/learnings.md:2 - holds - fine\n').get('3f9a1c2b7e'), 'holds');
+});
+
+test('a broken ruling in another shape still counts as broken; holds stays strict', () => {
+  for (const text of ['## Facts\n1. [3f9a1c2b7e] broken - x\n', '## Facts\n+ [3f9a1c2b7e] broken\n', '## Facts\n- [3f9a1c2b7e] (broken) x\n', '## Facts\n- [3f9a1c2b7e] is broken: x\n', '## Facts (2)\n- [3f9a1c2b7e] is broken\n', '**Facts**\n- [3f9a1c2b7e] is broken\n']) {
+    assert.equal(rulings(text).get('3f9a1c2b7e'), 'broken', text);
+  }
+  assert.equal(rulings('## Facts\n- [3f9a1c2b7e] is fine and holds\n').size, 0);
+  assert.equal(rulings('## Findings\n- [3f9a1c2b7e] broken\n').size, 0);
+});

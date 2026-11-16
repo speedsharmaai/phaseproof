@@ -139,7 +139,8 @@ export const describeFact = (root, f) => `- [${f.id}] ${f.source}:${f.line} ${cl
 
 export const factsCovering = (root, paths, facts = loadFacts(root)) => facts.filter((f) => paths.some((p) => f.patterns.some((pattern) => globMatches(pattern, p))));
 
-const RULING = /^\s*[-*]\s*\[([0-9a-f]{10})\][ \t]*(?:[^\s:]+:\d+[ \t]*)?(?:[-–—:][ \t]*)*(holds|broken|outdated)\b(?![ \t]*\|)/i;
+const RULING = /^\s*(?:[-*+]|\d+[.)])\s*\[([0-9a-f]{10})\][ \t]*(?:[^\s:]+:\d+[ \t]*[-–—:]+[ \t]*|(?:[-–—:][ \t]*)*)(holds|broken|outdated)\b(?![ \t]*\|)/i;
+const ANY_ID = /^\s*(?:[-*+]|\d+[.)])\s*\[([0-9a-f]{10})\]/i;
 const VERDICTS = ['broken', 'outdated', 'holds'];
 
 export function rulings(reviewText) {
@@ -147,11 +148,13 @@ export function rulings(reviewText) {
   let inFacts = false;
   for (const raw of String(reviewText ?? '').replace(/\r/g, '').split('\n')) {
     const line = raw.replace(/\*\*|`/g, '');
-    if (/^#{1,6}\s/.test(line)) inFacts = /^#{1,6}\s+facts\s*$/i.test(line);
-    const m = inFacts ? RULING.exec(line) : null;
-    if (!m) continue;
-    const id = m[1].toLowerCase();
-    const said = m[2].toLowerCase();
+    if (/^#{1,6}\s/.test(line) || /^\s*facts\b[^a-z]*$/i.test(line)) inFacts = /^(?:#{1,6}\s+)?facts\b[^a-z]*$/i.test(line.trim());
+    if (!inFacts) continue;
+    const loose = ANY_ID.exec(line);
+    const m = RULING.exec(line);
+    const said = m ? m[2].toLowerCase() : loose && /\bbroken\b/i.test(line.slice(loose[0].length)) && !/\|/.test(line) ? 'broken' : null;
+    if (!said) continue;
+    const id = (m ?? loose)[1].toLowerCase();
     const before = out.get(id);
     if (!before || VERDICTS.indexOf(said) < VERDICTS.indexOf(before)) out.set(id, said);
   }
