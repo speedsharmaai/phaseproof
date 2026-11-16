@@ -163,7 +163,7 @@ export function phaseDir(root, phase) {
   return phaseDirs(root, phase)[0] ?? null;
 }
 
-function visibleText(md) {
+export function visibleText(md) {
   let text = md.replace(/\r/g, '').replace(/```[\s\S]*?(```|$)/g, '');
   let before;
   do {
