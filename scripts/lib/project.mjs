@@ -1,5 +1,5 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
@@ -18,14 +18,48 @@ export function padPhase(id) {
 
 export const ppPath = (root, ...parts) => join(root, DIR, ...parts);
 
+function onDisk(path) {
+  const rest = [];
+  for (let cur = resolve(path); ; cur = dirname(cur)) {
+    try {
+      return join(realpathSync.native(cur), ...rest.reverse());
+    } catch {
+      if (dirname(cur) === cur) return resolve(path);
+      rest.push(basename(cur));
+    }
+  }
+}
+
+const inside = (rel) => Boolean(rel) && !rel.startsWith('..') && !isAbsolute(rel);
+
+export function writeTarget(root, file) {
+  let abs = resolve(root, file);
+  for (let hop = 0; hop < 40; hop++) {
+    try {
+      if (!lstatSync(abs).isSymbolicLink()) break;
+      abs = resolve(onDisk(dirname(abs)), readlinkSync(abs));
+    } catch {
+      break;
+    }
+  }
+  return join(onDisk(dirname(abs)), basename(abs));
+}
+
 export function toProjectPath(root, file) {
-  const rel = relative(resolve(root), resolve(root, file));
-  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
-  return rel.split(sep).join('/');
+  let rel = relative(resolve(root), resolve(root, file));
+  if (!inside(rel)) rel = relative(onDisk(root), onDisk(resolve(root, file)));
+  return inside(rel) ? rel.split(sep).join('/') : null;
 }
 
 const nfc = (s) => s.normalize('NFC');
-export const samePath = (a, b) => nfc(a).toLowerCase() === nfc(b).toLowerCase();
+const fold = (s) => nfc(s).toUpperCase().toLowerCase();
+export const samePath = (a, b) => fold(a) === fold(b);
+
+const stateDirName = (segment) => {
+  const name = fold(segment).split(':')[0].replace(/[. ]+$/, '');
+  return name === DIR || /^phasep~\d+$/.test(name);
+};
+export const inStateDir = (rel) => stateDirName(rel.split('/')[0]);
 
 export function linkedPath(root, rel) {
   const parts = rel.split('/');
@@ -52,12 +86,32 @@ export function exactCase(root, rel) {
 }
 export const isActive = (root) => Boolean(root) && existsSync(ppPath(root, 'state.json'));
 
+export function findRoot(start) {
+  if (!start) return start;
+  for (let dir = resolve(start); ; dir = dirname(dir)) {
+    if (isActive(dir)) return dir;
+    if (dirname(dir) === dir) return start;
+  }
+}
+
 export function readJson(file, fallback) {
   try {
     return JSON.parse(readFileSync(file, 'utf8'));
   } catch {
     return fallback;
   }
+}
+
+export function ensureLine(file, line) {
+  try {
+    if (!lstatSync(file).isFile()) return;
+  } catch (e) {
+    if (e.code !== 'ENOENT') return;
+  }
+  const text = readText(file) ?? '';
+  if (text.split(/\r?\n/).some((l) => l.trim() === line)) return;
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`);
 }
 
 export function writeJson(file, data) {
@@ -81,6 +135,11 @@ export function loadConfig(root) {
   return { ...config, checks: strings(config.checks) ? config.checks : [], docPaths: strings(config.docPaths) ? config.docPaths : DEFAULT_CONFIG.docPaths };
 }
 export const loadState = (root) => readJson(ppPath(root, 'state.json'), null);
+
+export function currentPhase(root) {
+  const phase = loadState(root)?.phase;
+  return typeof phase === 'string' && /^\d{1,3}$/.test(phase) ? phase : null;
+}
 
 const isDir = (path) => {
   try {
@@ -215,13 +274,21 @@ export function changedLocked(root, phase) {
     .sort();
 }
 
-export function scopeHash(root, phase) {
+const lf = (text) => text.replace(/\r\n/g, '\n');
+const unticked = (text) => lf(text).replace(/^([ \t]*(?:[-*+]|\d+[.)])[ \t]+)\[[xX]\]/gm, '$1[ ]');
+
+function scopeHashes(root, phase) {
   const dir = phaseDir(root, phase);
   if (!dir) return null;
-  const parts = SCOPE_FILES.map((name) => `${name}\n${readText(join(dir, name)) ?? ''}`);
-  for (const path of lockedTests(root, phase)) parts.push(`locked ${path}\n${lockedDigest(root, path)}`);
-  return sha256(parts.join('\n---\n'));
+  const hash = (normalize) => {
+    const parts = SCOPE_FILES.map((name) => `${name}\n${normalize(name, readText(join(dir, name)) ?? '')}`);
+    for (const path of lockedTests(root, phase)) parts.push(`locked ${path}\n${lockedDigest(root, path)}`);
+    return sha256(parts.join('\n---\n'));
+  };
+  return { folded: hash((name, t) => (name === 'tasks.md' ? unticked(t) : lf(t))), raw: hash((_name, t) => t) };
 }
+
+export const scopeHash = (root, phase) => scopeHashes(root, phase)?.folded ?? null;
 
 export function configHash(root) {
   const { checks, docPaths } = loadConfig(root);
@@ -233,9 +300,14 @@ export function configChanged(root, phase) {
   return Boolean(approval?.configHash) && approval.configHash !== configHash(root);
 }
 
+export function scopeMatches(root, phase, hash) {
+  const now = scopeHashes(root, phase);
+  return hash === now?.folded || hash === now?.raw;
+}
+
 export function scopeChanged(root, phase) {
   const approval = readJson(approvalFile(root, phase), null);
-  return Boolean(approval?.scopeHash) && approval.scopeHash !== scopeHash(root, phase);
+  return Boolean(approval?.scopeHash) && !scopeMatches(root, phase, approval.scopeHash);
 }
 
 export function gitHead(root) {

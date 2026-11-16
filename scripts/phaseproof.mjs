@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { measure, overBudget } from './lib/budget.mjs';
 import { allPassed, runChecks } from './lib/checks.mjs';
 import { codeFingerprint, reviewDrift } from './lib/drift.mjs';
@@ -14,6 +15,9 @@ import {
   DEFAULT_CONFIG,
   configChanged,
   configHash,
+  currentPhase,
+  ensureLine,
+  findRoot,
   gateFile,
   gitHead,
   gateRuns,
@@ -31,6 +35,7 @@ import {
   reviewFile,
   runFile,
   scopeChanged,
+  scopeMatches,
   scopeBudget,
   scopeHash,
   scopeList,
@@ -101,7 +106,22 @@ function testWarnings(root, phase, approval) {
 
 function requireActive(root) {
   if (!isActive(root)) refuse('this project is not tracked yet. Run: phaseproof init');
-  return loadState(root);
+  const phase = currentPhase(root);
+  if (!phase) refuse('.phaseproof/state.json cannot be read or has no valid phase number. Run: phaseproof doctor');
+  return { ...loadState(root), phase };
+}
+
+function gitNote(root) {
+  if (gitHead(root) !== null) return null;
+  const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: root, encoding: 'utf8', timeout: 20000 }).stdout?.trim() === 'true';
+  const off = 'so the shell guard, the test comparison, the budget and the "code changed after review" check are off';
+  return inRepo ? `The repository has no commits yet, ${off}. Commit once and approve again.` : `This project is not a git repository, ${off}. Run git init, commit once and approve again.`;
+}
+
+const UNION = 'runs/reviews.jsonl merge=union';
+
+function addUnionMerge(root) {
+  ensureLine(ppPath(root, '.gitattributes'), UNION);
 }
 
 function requireReview(root, phase, kind) {
@@ -122,11 +142,15 @@ function checkResults(root, phase) {
   return results;
 }
 
-const describe = (results) => results.map((r) => `  ${r.code === 0 ? 'ok  ' : 'FAIL'} ${r.cmd} (${r.ms} ms)`).join('\n');
+const indent = (text) => text.split('\n').map((line) => `      ${line}`).join('\n');
+const describe = (results) =>
+  results.map((r) => `  ${r.code === 0 ? 'ok  ' : 'FAIL'} ${r.cmd} (${r.ms} ms)${r.code !== 0 && r.tail ? `\n${indent(r.tail)}` : ''}`).join('\n');
 
 const commands = {
   init(root, args, out) {
-    if (isActive(root)) return out('already tracked. Run: phaseproof status');
+    if (isActive(root)) return out(args.includes('--check') ? 'already tracked, checks not changed. Edit "checks" in .phaseproof/config.json; the owner approves again after.' : 'already tracked. Run: phaseproof status');
+    const tracked = findRoot(root);
+    if (tracked !== root) refuse(`already tracked at ${tracked}. Run phaseproof from there; one project has one .phaseproof/ folder`);
     const checks = [];
     let phase = '01';
     for (let i = 0; i < args.length; i++) {
@@ -136,6 +160,7 @@ const commands = {
     writeJson(ppPath(root, 'config.json'), { ...loadConfig(root), checks });
     writeJson(ppPath(root, 'state.json'), { version: 1, phase });
     for (const d of ['reviews', 'approvals', 'gates', 'runs', 'blocks']) mkdirSync(ppPath(root, d), { recursive: true });
+    addUnionMerge(root);
     out(`tracking started at phase ${phase}${checks.length ? '' : '. Add your test/typecheck commands to .phaseproof/config.json'}`);
   },
 
@@ -185,15 +210,18 @@ const commands = {
     if (existsSync(join(dir, 'screens.md'))) requireReview(root, phase, 'design');
     const locked = requireLockable(root, phase);
     const scope = scopeHash(root, phase);
-    if (!quick && previous?.scopeHash && previous.scopeHash !== scope && previous.docsReview === docs) {
+    if (!quick && previous?.scopeHash && !scopeMatches(root, phase, previous.scopeHash) && previous.docsReview === docs) {
       refuse(`phase ${phase} scope changed since the last approval. Get a fresh docs review first.`);
     }
     const head = gitHead(root);
     const base = args.includes('--new-base') ? head : (previous?.base ?? previous?.head ?? head);
+    addUnionMerge(root);
     writeJson(approvalFile(root, phase), { phase, approvedAt: new Date().toISOString(), head, base, size: quick ? 'quick' : 'full', scopeHash: scope, docsReview: docs, configHash: configHash(root), locked: lockedDigests(root, phase) });
     const unblocked = existsSync(blockFile(root, phase));
     if (unblocked) rmSync(blockFile(root, phase));
     const notes = [];
+    const noGit = gitNote(root);
+    if (noGit) notes.push(noGit);
     if (quick) notes.push(existingDocs && !parseVerdict(existingDocs).pass ? 'Approved as quick even though its docs review failed.' : 'Approved as quick: no docs review.');
     if (removalAllowance(root, phase)) notes.push(`The scope allows removing tests: ${removalAllowance(root, phase)}.`);
     if (locked.length) notes.push(`Locked tests, closed to edits until the gate: ${listed(locked)}.`);
@@ -310,5 +338,6 @@ export function main(argv, { root = process.cwd(), out = console.log, err = cons
 }
 
 if (isMain(import.meta.url)) {
-  process.exitCode = main(process.argv.slice(2), { root: process.env.CLAUDE_PROJECT_DIR || process.cwd() });
+  const start = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  process.exitCode = main(process.argv.slice(2), { root: process.argv[2] === 'init' ? start : findRoot(start) });
 }

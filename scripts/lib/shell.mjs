@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSy
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isDoc } from './decide.mjs';
-import { loadConfig, readJson, sha256 } from './project.mjs';
+import { inStateDir, loadConfig, readJson, sha256 } from './project.mjs';
 
 const MAX_HASHED_BYTES = 1024 * 1024;
 const MAX_HASHED_FILES = 2000;
@@ -54,7 +54,7 @@ function toCode(state, docPaths, topPaths) {
   for (const p of topPaths) {
     if (!p.startsWith(state.prefix)) continue;
     const rel = p.slice(state.prefix.length).replace(/\/$/, '');
-    if (rel && rel !== '.phaseproof' && !rel.startsWith('.phaseproof/') && !isDoc(rel, docPaths)) out.add(rel);
+    if (rel && !inStateDir(rel) && !isDoc(rel, docPaths)) out.add(rel);
   }
   return [...out];
 }

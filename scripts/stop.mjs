@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { closedReason } from './lib/decide.mjs';
 import { codeFingerprint, driftSince, isFingerprint } from './lib/drift.mjs';
 import { isMain } from './lib/main.mjs';
-import { approvalFile, blockFile, gateFile, isActive, loadState, ppPath, readJson, runFile, writeJson } from './lib/project.mjs';
+import { approvalFile, blockFile, findRoot, gateFile, isActive, loadState, ppPath, readJson, runFile, writeJson } from './lib/project.mjs';
 
 const nudgeFile = (root, phase) => ppPath(root, 'runs', `phase-${phase}-stop.json`);
 
@@ -32,7 +32,7 @@ export function nudge(root, input) {
 export function respond(raw, projectDir = process.env.CLAUDE_PROJECT_DIR) {
   try {
     const input = JSON.parse(raw);
-    const reason = nudge(projectDir || input.cwd, input);
+    const reason = nudge(findRoot(projectDir || input.cwd), input);
     return reason ? JSON.stringify({ decision: 'block', reason }) : '';
   } catch {
     return '';

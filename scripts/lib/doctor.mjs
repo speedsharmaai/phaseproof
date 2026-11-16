@@ -34,7 +34,7 @@ function parses(file) {
   }
 }
 
-export function doctor(root, { node = process.versions.node, pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || OWN_ROOT } = {}) {
+export function doctor(root, { node = process.versions.node, pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || OWN_ROOT, env = process.env } = {}) {
   const out = [];
   const ok = (text) => out.push({ level: 'ok', text });
   const warn = (text) => out.push({ level: 'warn', text });
@@ -46,6 +46,9 @@ export function doctor(root, { node = process.versions.node, pluginRoot = proces
 
   if (existsSync(join(pluginRoot, 'hooks', 'hooks.json'))) ok('plugin hooks file found');
   else fail(`no hooks/hooks.json under ${pluginRoot}. Reinstall the plugin`);
+
+  const forced = env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE;
+  if (forced && forced !== '0' && forced.toLowerCase() !== 'false') warn(`CLAUDE_CODE_SUBAGENT_MODEL_FORCE is set, so Claude Code ignores the reviewers' model: opus and runs them on ${env.CLAUDE_CODE_SUBAGENT_MODEL || 'the session model'}. Unset it to keep reviews on a stronger model than the builder`);
 
   const version = git(root, ['--version']);
   const inGit = version.status === 0 && git(root, ['rev-parse', '--is-inside-work-tree']).stdout?.trim() === 'true';
@@ -63,7 +66,7 @@ export function doctor(root, { node = process.versions.node, pluginRoot = proces
     fail('.phaseproof/state.json has no valid phase number');
     return out;
   }
-  ok(`tracking phase ${phase}`);
+  ok(`tracking phase ${phase} in ${root}`);
 
   if (!parses(ppPath(root, 'config.json'))) fail('.phaseproof/config.json cannot be read as JSON (a trailing comma, or not a file), so its checks and doc paths are ignored');
   const raw = readJson(ppPath(root, 'config.json'), {}) ?? {};
