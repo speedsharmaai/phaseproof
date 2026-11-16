@@ -276,8 +276,11 @@ const commands = {
       if (fp) judged = judgeFacts(root, [...Object.keys(fp.tracked), ...Object.keys(fp.untracked)], code);
     } catch {}
     const where = (facts) => listed(facts.map((f) => `${f.source}:${f.line}`));
-    if (!judged && brokenRulings(code).length) refuse(`the code review calls bound fact ${brokenRulings(code).join(', ')} broken, and the changed code could not be listed to check it. Fix the code and review again`);
-    if (judged?.broken.length) refuse(`the code review says bound fact ${where(judged.broken)} is broken. Fix the code and review again, or, if the scope meant to change that rule, update the fact and review again`);
+    const broken = brokenRulings(code);
+    if (broken.length) {
+      const named = judged?.broken.length ? where(judged.broken) : broken.map((id) => `[${id}]`).join(', ');
+      refuse(`the code review says bound fact ${named} is broken. Fix the code, or, if the scope meant to change that rule, update the fact; then get a new code review`);
+    }
     const tests = testWarnings(root, phase, approval);
     const over = overBudget(scopeBudget(root, phase), measure(root, approval.base ?? approval.head ?? null));
     const warnings = [

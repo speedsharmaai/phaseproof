@@ -96,7 +96,7 @@ function sources(root) {
   return ['docs/learnings.md', ...adrs];
 }
 
-const factId = (f) => sha256(`${f.source}\n${f.text}\n${f.patterns.join(',')}`).slice(0, 10);
+const factId = (f) => sha256(`${f.source}\n${f.body ?? f.text}\n${f.patterns.join(',')}`).slice(0, 10);
 
 export function loadFacts(root) {
   const facts = [];
@@ -116,9 +116,9 @@ export function loadFacts(root) {
     if (at === -1) continue;
     const patterns = patternsOf(ADR_APPLIES.exec(lines[at])[1]);
     const title = (lines.find((line) => /^#\s+\S/.test(line)) ?? source).replace(/^#\s+/, '');
-    if (patterns.length) facts.push({ source, line: at + 1, text: `decision: ${title}. Read it before changing this file`, patterns });
+    if (patterns.length) facts.push({ source, line: at + 1, text: `decision: ${title}. Read it before changing this file`, patterns, body: lines.join('\n') });
   }
-  return facts.map((f) => ({ ...f, id: factId(f) }));
+  return facts.map(({ body, ...f }) => ({ ...f, id: factId({ ...f, body }) }));
 }
 
 const literalLength = (pattern) => pattern.split('*')[0].length;
@@ -139,7 +139,7 @@ export const describeFact = (root, f) => `- [${f.id}] ${f.source}:${f.line} ${cl
 
 export const factsCovering = (root, paths, facts = loadFacts(root)) => facts.filter((f) => paths.some((p) => f.patterns.some((pattern) => globMatches(pattern, p))));
 
-const RULING_ID = /^\s*[-*]\s*\[([0-9a-f]{10})\]/i;
+const RULING = /^\s*[-*]\s*\[([0-9a-f]{10})\][ \t]*(?:[^\s:]+:\d+[ \t]*)?(?:[-–—:][ \t]*)*(holds|broken|outdated)\b(?![ \t]*\|)/i;
 const VERDICTS = ['broken', 'outdated', 'holds'];
 
 export function rulings(reviewText) {
@@ -148,13 +148,12 @@ export function rulings(reviewText) {
   for (const raw of String(reviewText ?? '').replace(/\r/g, '').split('\n')) {
     const line = raw.replace(/\*\*|`/g, '');
     if (/^#{1,6}\s/.test(line)) inFacts = /^#{1,6}\s+facts\s*$/i.test(line);
-    const m = inFacts ? RULING_ID.exec(line) : null;
+    const m = inFacts ? RULING.exec(line) : null;
     if (!m) continue;
-    const said = VERDICTS.filter((v) => new RegExp(`\\b${v}\\b`, 'i').test(line.slice(m[0].length)));
-    if (said.length !== 1) continue;
     const id = m[1].toLowerCase();
+    const said = m[2].toLowerCase();
     const before = out.get(id);
-    if (!before || VERDICTS.indexOf(said[0]) < VERDICTS.indexOf(before)) out.set(id, said[0]);
+    if (!before || VERDICTS.indexOf(said) < VERDICTS.indexOf(before)) out.set(id, said);
   }
   return out;
 }

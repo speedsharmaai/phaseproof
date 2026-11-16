@@ -268,5 +268,29 @@ test('a broken ruling still refuses when the changed code cannot be listed', (t)
   put(root, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Facts\n- [${idOf(root, 'OTP codes')}] broken\n`);
   const gate = cli(root, 'gate', '01');
   assert.equal(gate.code, 1);
-  assert.match(gate.err, /could not be listed/);
+  assert.match(gate.err, /is broken/);
+});
+
+test('editing a fact after a broken ruling does not get the gate through', (t) => {
+  const top = gitFacts(t, LEARNINGS);
+  const id = idOf(top, 'OTP codes');
+  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Facts\n- [${id}] broken - src/otp.js:1 sets 3600\n`);
+  put(top, 'docs/learnings.md', LEARNINGS.replace('5 minutes', '60 minutes'));
+  const gate = cli(top, 'gate', '01');
+  assert.equal(gate.code, 1);
+  assert.match(gate.err, new RegExp(`\\[${id}\\] is broken`));
+});
+
+test('the ruling is the word straight after the id, not any word in the line', () => {
+  assert.equal(rulings('## Facts\n- [3f9a1c2b7e] broken - sets 3600 s, so the rule no longer holds\n').get('3f9a1c2b7e'), 'broken');
+  assert.equal(rulings('## Facts\n- [3f9a1c2b7e] docs/learnings.md:4 - holds - fine\n').get('3f9a1c2b7e'), 'holds');
+  assert.equal(rulings('## Facts\n- [01a7f8393a] docs/learnings.md:1 the session lock holds across retries (not checked by a gate yet)\n').size, 0);
+  assert.equal(rulings('## Facts\n- [3f9a1c2b7e] holds | broken | outdated - the file:line\n').size, 0);
+});
+
+test('changing an ADR decision makes it a new, unchecked fact', (t) => {
+  const root = project(t);
+  const before = idOf(root, 'decision: 0002');
+  put(root, 'docs/decisions/0002-sessions.md', ADR.replace('Postgres.\n', 'Redis after all.\n'));
+  assert.notEqual(idOf(root, 'decision: 0002'), before);
 });
