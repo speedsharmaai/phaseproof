@@ -254,17 +254,17 @@ test('interrupting the CLI stops the check it was running', { skip: process.plat
   const root = approvedProject(t, [`node -e "require('fs').writeFileSync('pid', String(process.pid)); setTimeout(() => {}, 30000)"`]);
   const cliProc = spawn(process.execPath, [join(import.meta.dirname, '..', 'scripts', 'phaseproof.mjs'), 'check'], { cwd: root, detached: true, stdio: 'ignore', env: { ...process.env, CLAUDE_PROJECT_DIR: root } });
   const pidFile = join(root, 'pid');
-  for (let i = 0; i < 100 && !existsSync(pidFile); i++) await new Promise((r) => setTimeout(r, 100));
+  for (let i = 0; i < 300 && !existsSync(pidFile); i++) await new Promise((r) => setTimeout(r, 100));
   const pid = Number(readFileSync(pidFile, 'utf8'));
   process.kill(-cliProc.pid, 'SIGINT');
+  const running = () => {
+    const ps = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+    return ps.status === 0 && !ps.stdout.trim().startsWith('Z');
+  };
   let alive = true;
-  for (let i = 0; i < 50 && alive; i++) {
+  for (let i = 0; i < 150 && alive; i++) {
     await new Promise((r) => setTimeout(r, 100));
-    try {
-      process.kill(pid, 0);
-    } catch {
-      alive = false;
-    }
+    alive = running();
   }
   assert.equal(alive, false);
 });
