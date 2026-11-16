@@ -53,18 +53,19 @@ export function decide({ root, toolName, toolInput = {} }) {
   const typed = toProjectPath(root, String(file));
   const target = writeTarget(root, String(file));
   const rel = toProjectPath(root, target);
+  const linked = hardLinked(target);
   if ((rel && inStateDir(rel)) || (typed && inStateDir(typed))) {
-    if (typed === rel && WRITABLE_STATE.some((p) => p.test(rel))) return allow;
+    if (typed === rel && !linked && WRITABLE_STATE.some((p) => p.test(rel))) return allow;
     return deny(`${rel ?? typed} is written by the phaseproof script, not by hand.`);
   }
   if (!rel) return allow;
 
   const locked = lockedReason(root, rel);
-  if (locked !== undefined) return locked ? deny(locked) : allow;
+  if (locked !== undefined && (locked || !linked)) return locked ? deny(locked) : allow;
 
   const phase = currentPhase(root);
   const docPaths = phase && configChanged(root, phase) ? DEFAULT_CONFIG.docPaths : loadConfig(root).docPaths;
-  if (isDoc(rel, docPaths) && !hardLinked(target)) return allow;
+  if (isDoc(rel, docPaths) && !linked) return allow;
 
   const reason = closedReason(root);
   return reason ? deny(reason) : allow;

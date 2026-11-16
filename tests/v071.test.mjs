@@ -259,6 +259,14 @@ test('interrupting the CLI stops the check it was running', { skip: process.plat
   process.kill(-cliProc.pid, 'SIGINT');
   const running = () => {
     const ps = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+    if (ps.error) {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    }
     return ps.status === 0 && !ps.stdout.trim().startsWith('Z');
   };
   let alive = true;
@@ -323,6 +331,8 @@ test('a doc hard-linked to a code file is judged as code', { skip: process.platf
   assert.equal(write(root, 'docs/notes.md').allow, false);
   put(root, 'docs/plain.md', '# x\n');
   assert.equal(write(root, 'docs/plain.md').allow, true);
+  linkSync(join(root, 'src/a.js'), join(root, '.phaseproof/reviews/notes.md'));
+  assert.equal(write(root, '.phaseproof/reviews/notes.md').allow, false);
 });
 
 test('review files must be saved under their exact lower-case name', (t) => {
