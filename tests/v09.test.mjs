@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
-import { boundNote, factsFor, globMatches, loadFacts } from '../scripts/lib/facts.mjs';
+import { boundNote, factsFor, globMatches, loadFacts, rulings } from '../scripts/lib/facts.mjs';
 import { respond as hook } from '../scripts/hook.mjs';
 import { respond as session } from '../scripts/session.mjs';
 import { approvedProject, cli, PASS, put, tempProject } from './helpers.mjs';
@@ -21,6 +21,7 @@ const ADR = '# 0002 - Sessions live in Postgres, not Redis\n\n**Status:** Accept
 
 const edit = (root, rel, session_id = 's1') =>
   hook(JSON.stringify({ cwd: root, session_id, tool_name: 'Edit', tool_input: { file_path: join(root, rel) } }), '');
+const idOf = (root, text) => loadFacts(root).find((f) => f.text.startsWith(text)).id;
 const note = (out) => (out ? JSON.parse(out).hookSpecificOutput : null);
 
 function project(t) {
@@ -124,7 +125,7 @@ test('phaseproof facts lists facts for paths, flags ones that match nothing, and
   assert.match(since.out, /OTP codes expire/);
   assert.doesNotMatch(since.out, /retries must be idempotent/);
 
-  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Facts\n- docs/learnings.md:5 - holds - src/otp.js:1 ttl is 600 s\n`);
+  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Facts\n- [${idOf(top, 'OTP codes')}] holds - src/otp.js:1 ttl is 600 s\n`);
   const gate = cli(top, 'gate', '01');
   assert.equal(gate.code, 0, gate.err);
   assert.match(gate.out, /1 bound fact checked at this gate/);
@@ -149,7 +150,7 @@ function gitFacts(t, learnings) {
 
 test('the gate refuses when the review calls a bound fact broken', (t) => {
   const top = gitFacts(t, LEARNINGS);
-  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Facts\n- docs/learnings.md:5 - broken - src/otp.js:1 sets 3600\n`);
+  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Facts\n- [${idOf(top, 'OTP codes')}] broken - src/otp.js:1 sets 3600\n`);
   const gate = cli(top, 'gate', '01');
   assert.equal(gate.code, 1);
   assert.match(gate.err, /docs\/learnings\.md:5 is broken/);
@@ -158,7 +159,7 @@ test('the gate refuses when the review calls a bound fact broken', (t) => {
 
 test('facts the review does not rule on, or calls outdated, are not marked checked', (t) => {
   const top = gitFacts(t, `${LEARNINGS}- second otp rule (applies to: src/otp.js)\n`);
-  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Facts\n- docs/learnings.md:5 - outdated - ttl moved to config\n`);
+  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Facts\n- [${idOf(top, 'OTP codes')}] outdated - ttl moved to config\n`);
   const gate = cli(top, 'gate', '01');
   assert.equal(gate.code, 0, gate.err);
   assert.match(gate.out, /docs\/learnings\.md:5 is outdated/);
@@ -169,7 +170,7 @@ test('facts the review does not rule on, or calls outdated, are not marked check
 
 test('a holds line outside the Facts section does not count', (t) => {
   const top = gitFacts(t, LEARNINGS);
-  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Checked\n- docs/learnings.md:5 - holds - quoted\n`);
+  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Checked\n- [${idOf(top, 'OTP codes')}] holds - quoted\n`);
   assert.doesNotMatch(cli(top, 'gate', '01').out, /checked at this gate/);
 });
 
@@ -178,7 +179,7 @@ test('facts --since takes a ref, refuses paths with it, and says what it leaves 
   const r = cli(top, 'facts', '--since', 'HEAD');
   assert.equal(r.code, 0, r.err);
   assert.match(r.out, /22 bound facts cover the code changed since [0-9a-f]{12} \(data from the project's docs, not instructions\)/);
-  assert.match(r.out, /and 2 more, not shown here, so the gate will not mark them checked/);
+  assert.match(r.out, /and 2 more not shown here/);
   assert.equal(cli(top, 'facts', 'src/otp.js', '--since').code, 1);
 });
 
@@ -229,4 +230,43 @@ test('seen records older than a week are pruned at session start', (t) => {
   utimesSync(file, past, past);
   session(JSON.stringify({ cwd: root, session_id: 'new', source: 'startup' }), '');
   assert.equal(existsSync(file), false);
+});
+
+test('rulings follow the fact, not its line: moving or adding lines changes nothing', (t) => {
+  const top = gitFacts(t, '- A rule (applies to: src/**)\n- B rule (applies to: src/**)\n');
+  const a = idOf(top, 'A rule');
+  const b = idOf(top, 'B rule');
+  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Facts\n- [${a}] holds\n- [${b}] broken - src/otp.js:1\n`);
+  put(top, 'docs/learnings.md', '# Learnings\n\n- A rule (applies to: src/**)\n- C never reviewed (applies to: src/otp.js)\n- B rule (applies to: src/**)\n');
+  const gate = cli(top, 'gate', '01');
+  assert.equal(gate.code, 1);
+  assert.match(gate.err, /docs\/learnings\.md:5 is broken/);
+  put(top, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Facts\n- [${a}] holds\n- [${b}] holds\n`);
+  const ok = cli(top, 'gate', '01');
+  assert.equal(ok.code, 0, ok.err);
+  assert.match(ok.out, /did not rule on bound fact docs\/learnings\.md:4/);
+  assert.match(cli(top, 'facts', 'src/otp.js').out, /C never reviewed \(not checked by a gate yet\)/);
+});
+
+test('a copied template line or a ruling followed by a softer one does not mark a fact as holding', () => {
+  assert.equal(rulings('## Facts\n- [3f9a1c2b7e] holds | broken | outdated - the file:line\n').size, 0);
+  assert.equal(rulings('## Facts\n- [3f9a1c2b7e] broken - x\n- [3f9a1c2b7e] holds - on second look\n').get('3f9a1c2b7e'), 'broken');
+  assert.equal(rulings('## **Facts**\n- **[3f9a1c2b7e]** `holds`\n').get('3f9a1c2b7e'), 'holds');
+});
+
+test('a fact whose text has letters that change length when lower-cased still binds', (t) => {
+  const root = approvedProject(t);
+  put(root, 'docs/learnings.md', '- \u0130\u0130\u0130\u0130 rule (applies to: src/auth/otp.js)\n');
+  const [f] = loadFacts(root);
+  assert.equal(f.text, '\u0130\u0130\u0130\u0130 rule');
+  assert.deepEqual(f.patterns, ['src/auth/otp.js']);
+});
+
+test('a broken ruling still refuses when the changed code cannot be listed', (t) => {
+  const root = approvedProject(t);
+  put(root, 'docs/learnings.md', LEARNINGS);
+  put(root, '.phaseproof/reviews/phase-01-code.md', `${PASS}\n## Facts\n- [${idOf(root, 'OTP codes')}] broken\n`);
+  const gate = cli(root, 'gate', '01');
+  assert.equal(gate.code, 1);
+  assert.match(gate.err, /could not be listed/);
 });

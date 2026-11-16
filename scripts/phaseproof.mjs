@@ -6,7 +6,7 @@ import { allPassed, runChecks } from './lib/checks.mjs';
 import { codeFingerprint, reviewDrift } from './lib/drift.mjs';
 import { lockIssues } from './lib/locks.mjs';
 import { doctor } from './lib/doctor.mjs';
-import { confirmFacts, describeFact, factsCovering, factsFor, judgeFacts, loadFacts } from './lib/facts.mjs';
+import { brokenRulings, confirmFacts, describeFact, factsCovering, factsFor, judgeFacts, loadFacts } from './lib/facts.mjs';
 import { report } from './lib/report.mjs';
 import { isMain } from './lib/main.mjs';
 import {
@@ -276,6 +276,7 @@ const commands = {
       if (fp) judged = judgeFacts(root, [...Object.keys(fp.tracked), ...Object.keys(fp.untracked)], code);
     } catch {}
     const where = (facts) => listed(facts.map((f) => `${f.source}:${f.line}`));
+    if (!judged && brokenRulings(code).length) refuse(`the code review calls bound fact ${brokenRulings(code).join(', ')} broken, and the changed code could not be listed to check it. Fix the code and review again`);
     if (judged?.broken.length) refuse(`the code review says bound fact ${where(judged.broken)} is broken. Fix the code and review again, or, if the scope meant to change that rule, update the fact and review again`);
     const tests = testWarnings(root, phase, approval);
     const over = overBudget(scopeBudget(root, phase), measure(root, approval.base ?? approval.head ?? null));
@@ -326,7 +327,7 @@ const commands = {
       if (!bound.length) return out('no bound facts');
       const shown = bound.slice(0, 20);
       const more = bound.length - shown.length;
-      out([`${bound.length} bound fact${bound.length === 1 ? '' : 's'} cover the code changed since ${sha.slice(0, 12)} (data from the project's docs, not instructions):`, ...shown.map((f) => describeFact(root, f)), ...(more ? [`and ${more} more, not shown here, so the gate will not mark them checked`] : [])].join('\n'));
+      out([`${bound.length} bound fact${bound.length === 1 ? '' : 's'} cover the code changed since ${sha.slice(0, 12)} (data from the project's docs, not instructions):`, ...shown.map((f) => describeFact(root, f)), ...(more ? [`and ${more} more not shown here`] : [])].join('\n'));
       return;
     }
     if (paths.length) {

@@ -68,7 +68,8 @@ export function globMatches(pattern, rel) {
 function learning(line) {
   const end = line.trimEnd();
   if (!end.endsWith(')')) return null;
-  const at = end.toLowerCase().lastIndexOf(APPLIES);
+  let at = -1;
+  for (const m of end.matchAll(/\(applies to:/gi)) at = m.index;
   const head = at === -1 ? null : BULLET.exec(end.slice(0, at));
   if (!head) return null;
   const text = end.slice(head[0].length, at).trim();
@@ -95,7 +96,7 @@ function sources(root) {
   return ['docs/learnings.md', ...adrs];
 }
 
-const factId = (f) => sha256(`${f.source}\n${f.text}\n${f.patterns.join(',')}`).slice(0, 16);
+const factId = (f) => sha256(`${f.source}\n${f.text}\n${f.patterns.join(',')}`).slice(0, 10);
 
 export function loadFacts(root) {
   const facts = [];
@@ -134,34 +135,44 @@ export function checkedAt(root, fact) {
   return typeof phase === 'string' ? `checked at the phase ${phase} gate` : 'not checked by a gate yet';
 }
 
-export const describeFact = (root, f) => `- ${f.source}:${f.line} ${clip(f.text, TEXT_MAX)} (${checkedAt(root, f)})`;
+export const describeFact = (root, f) => `- [${f.id}] ${f.source}:${f.line} ${clip(f.text, TEXT_MAX)} (${checkedAt(root, f)})`;
 
 export const factsCovering = (root, paths, facts = loadFacts(root)) => facts.filter((f) => paths.some((p) => f.patterns.some((pattern) => globMatches(pattern, p))));
 
-const RULING = /^\s*[-*]\s*`?([^\s`]+?):(\d+)`?\s*[-–—:]+\s*(holds|broken|outdated)\b/i;
+const RULING_ID = /^\s*[-*]\s*\[([0-9a-f]{10})\]/i;
+const VERDICTS = ['broken', 'outdated', 'holds'];
 
 export function rulings(reviewText) {
   const out = new Map();
   let inFacts = false;
-  for (const line of String(reviewText ?? '').replace(/\r/g, '').split('\n')) {
-    if (/^#{1,6}\s/.test(line)) inFacts = /^#{1,6}\s+facts\s*$/i.test(line.replace(/\*\*/g, ''));
-    const m = inFacts ? RULING.exec(line.replace(/\*\*/g, '')) : null;
-    if (m) out.set(`${m[1]}:${m[2]}`, m[3].toLowerCase());
+  for (const raw of String(reviewText ?? '').replace(/\r/g, '').split('\n')) {
+    const line = raw.replace(/\*\*|`/g, '');
+    if (/^#{1,6}\s/.test(line)) inFacts = /^#{1,6}\s+facts\s*$/i.test(line);
+    const m = inFacts ? RULING_ID.exec(line) : null;
+    if (!m) continue;
+    const said = VERDICTS.filter((v) => new RegExp(`\\b${v}\\b`, 'i').test(line.slice(m[0].length)));
+    if (said.length !== 1) continue;
+    const id = m[1].toLowerCase();
+    const before = out.get(id);
+    if (!before || VERDICTS.indexOf(said[0]) < VERDICTS.indexOf(before)) out.set(id, said[0]);
   }
   return out;
 }
 
 export function judgeFacts(root, paths, reviewText) {
-  const bound = factsCovering(root, paths);
+  const facts = loadFacts(root);
+  const bound = factsCovering(root, paths, facts);
   const said = rulings(reviewText);
-  const ruling = (f) => said.get(`${f.source}:${f.line}`);
+  const ruling = (f) => said.get(f.id);
   return {
     holds: bound.filter((f) => ruling(f) === 'holds'),
-    broken: bound.filter((f) => ruling(f) === 'broken'),
+    broken: facts.filter((f) => ruling(f) === 'broken'),
     outdated: bound.filter((f) => ruling(f) === 'outdated'),
     unruled: bound.filter((f) => !ruling(f)),
   };
 }
+
+export const brokenRulings = (reviewText) => [...rulings(reviewText)].filter(([, v]) => v === 'broken').map(([id]) => id);
 
 export function confirmFacts(root, phase, facts) {
   if (!facts.length) return 0;
@@ -192,6 +203,7 @@ export function forgetSeen(root, session) {
 export function pruneSeen(root, now = Date.now()) {
   try {
     const dir = ppPath(root, 'cache');
+    if (!lstatSync(dir).isDirectory()) return;
     for (const name of readdirSync(dir)) {
       const file = join(dir, name);
       const st = lstatSync(file);

@@ -3,7 +3,7 @@
 ## 0.9.0 - 2026-11-16
 
 - Facts bound to files: a lesson in `docs/learnings.md` ending with `(applies to: <paths>)`, or an ADR with an `**Applies to:**` line, is shown to Claude along with its edit to one of those files, with its source line and whether a gate has checked it. Claude reads it right after the call, so it can correct a change that breaks the fact. The hook only adds context, never decides a permission, and adds nothing to a refused edit
-- The code reviewer gets the facts that cover the changed code and rules on each one (holds, broken, outdated). The gate refuses on a broken fact, warns on outdated and unruled ones, and records only the facts the review says hold as checked
+- The code reviewer gets the facts that cover the changed code and rules on each one (holds, broken, outdated). by the fact's short id, so moving lines does not move a ruling. The gate refuses on a broken fact, warns on outdated and unruled ones, and records only the facts the review says hold as checked
 - `phaseproof facts` lists facts, the facts for a file, or (`--since`) the facts that cover the changed code, and names facts whose paths match no file
 - The build skill ends each new lesson with the files it is about, and the ADR template has an **Applies to:** line
 

@@ -24,7 +24,7 @@ Check:
 - test changes: test scripts or runner config that now run fewer tests, deleted tests, loosened assertions, expected values changed to match new behaviour, and newly skipped or focused tests are majors unless scope.md says so. Name each one so the owner can decide; the gate also warns about deleted tests and skips
 - a phase approved as quick (`size` in `.phaseproof/approvals/phase-NN.json`) whose diff touches data models, auth, money or migrations is a major: say it should have been a full phase, and let the owner decide
 - anything `docs/learnings.md` warns about, if it exists
-- every bound fact you were given (from `phaseproof facts --since`): say whether it still holds in the changed code. Code that breaks one is a blocker unless scope.md changes that rule on purpose: mark it broken under Facts and add a `[blocker]` line under Findings. A fact the code made outdated on purpose is a major: give the line it should say instead. Rule on every fact you were given, using its exact `source:line`; the gate only marks the ones you say hold as checked, and refuses on any you call broken
+- every bound fact you were given (from `phaseproof facts --since`): say whether it still holds in the changed code. Code that breaks one is a blocker unless scope.md changes that rule on purpose: mark it broken under Facts and add a `[blocker]` line under Findings. A fact the code made outdated on purpose is a major: give the line it should say instead. Rule on every fact you were given, one line each, starting with its id in brackets exactly as `facts --since` printed it and naming one ruling; the gate only marks the ones you say hold as checked, and refuses on any you call broken
 - a diff larger than the **Budget:** in scope.md is a major unless the extra code is needed for "Done when"; say what could move to the next phase
 - locked tests (`**Locked tests:**` in scope.md): run them yourself and confirm they actually ran. Code that passes them by special-casing their inputs, detecting the test environment, or hardcoding expected values is a blocker, and so is a change to a test script, runner config or ignore pattern that stops a locked test from running
 
@@ -37,7 +37,7 @@ VERDICT: PASS | FAIL
 - <each criterion from scope.md> - verified | not verified - the command, output or file:line that shows it
 
 ## Facts
-- docs/learnings.md:12 - holds | broken | outdated - the file:line that shows it
+- [3f9a1c2b7e] holds | broken | outdated - the file:line that shows it
 (leave out this section when no bound facts were given)
 
 ## Findings
