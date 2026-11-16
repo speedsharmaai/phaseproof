@@ -35,7 +35,7 @@ const mtime = (file) => {
     return null;
   }
 };
-const after = (edited, time) => edited !== null && Number.isFinite(time) && edited > time;
+const after = (edited, time) => typeof edited === 'number' && Number.isFinite(time) && edited > time;
 
 export function records(root, phase) {
   if (!existsSync(approvalFile(root, phase)) || existsSync(gateFile(root, phase)) || closedReason(root)) return null;
@@ -43,7 +43,7 @@ export function records(root, phase) {
   const edited = lastEdit(root);
   const review = parseVerdict(readText(reviewFile(root, phase, 'code')));
   if (review.blockers.length) {
-    const later = after(edited, mtime(reviewFile(root, phase, 'code'))) ? ' (code was edited after this review, so some may be fixed; the next review decides)' : '';
+    const later = after(edited.mtime, mtime(reviewFile(root, phase, 'code'))) ? ' (code was edited after this review, so some may be fixed; the next review decides)' : '';
     lines.push(`Blockers in the last code review, .phaseproof/reviews/phase-${phase}-code.md${later}:`);
     lines.push(...review.blockers.slice(0, 3).map((b) => `  ${clip(b.trim(), 200)}`));
     if (review.blockers.length > 3) lines.push(`  and ${review.blockers.length - 3} more`);
@@ -51,7 +51,7 @@ export function records(root, phase) {
   const run = readJson(runFile(root, phase), null);
   const failing = Array.isArray(run?.results) ? run.results.filter((r) => r && r.code !== 0) : [];
   if (failing.length) {
-    const later = after(edited, Date.parse(run.ranAt)) ? ' (code was edited after this run; run check again)' : '';
+    const later = after(edited.at, Date.parse(run.ranAt)) ? ' (code was edited after this run; run check again)' : '';
     lines.push(`Last check run failed${later}: ${failing.slice(0, 3).map((r) => clip(String(r.cmd), 120)).join(', ')}`);
     const tail = String(failing[0].tail ?? '').split('\n').filter((l) => l.trim()).slice(-5);
     lines.push(...tail.map((l) => `  ${clip(l, 160)}`));

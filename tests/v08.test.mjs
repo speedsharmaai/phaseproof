@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { context, records } from '../scripts/session.mjs';
 import { respond as post } from '../scripts/post.mjs';
@@ -102,7 +102,8 @@ test('a doc edit is not a code edit, and a broken run file cannot lose the base 
   put(root, '.phaseproof/reviews/phase-01-code.md', FAIL);
   saveWith(root, 'docs/notes.md', '# n\n');
   assert.doesNotMatch(context(root), /edited after/);
-  put(root, '.phaseproof/runs/phase-01-checks.json', JSON.stringify({ ranAt: 'x', base: 'constructor', results: [{ cmd: {}, code: 1, tail: {} }] }));
+  writeFileSync(join(root, '.phaseproof/runs/phase-01-checks.json'), '{"ranAt":"x","results":[{"cmd":{"toString":1},"code":1}]}');
+  assert.throws(() => records(root, '01'));
   assert.match(context(root), /phaseproof is active/);
 });
 
@@ -158,4 +159,29 @@ test('only the last five lines of a failing check are put back', (t) => {
   cli(root, 'check');
   const tail = records(root, '01').split('\n').filter((l) => /^ {2}line \d+$/.test(l));
   assert.deepEqual(tail, ['  line 35', '  line 36', '  line 37', '  line 38', '  line 39']);
+});
+
+test('the last-edit record is never written through a symlink', { skip: process.platform === 'win32' }, (t) => {
+  const root = gitProject(t);
+  const victim = put(tempProject(t), 'victim.txt', 'keep\n');
+  mkdirSync(join(root, '.phaseproof/cache'), { recursive: true });
+  symlinkSync(victim, join(root, '.phaseproof/cache/last-edit.json'));
+  saveWith(root, 'src/a.js', '9\n');
+  assert.equal(readFileSync(victim, 'utf8'), 'keep\n');
+  const other = gitProject(t);
+  const target = tempProject(t);
+  symlinkSync(target, join(other, '.phaseproof/cache'));
+  saveWith(other, 'src/a.js', '9\n');
+  assert.equal(existsSync(join(target, 'last-edit.json')), false);
+});
+
+test('a review saved in the same second as the last edit on a coarse file system is not marked', (t) => {
+  const root = gitProject(t);
+  const second = new Date(Math.floor(Date.now() / 1000) * 1000);
+  put(root, 'src/a.js', '2\n');
+  utimesSync(join(root, 'src/a.js'), second, second);
+  post(JSON.stringify({ cwd: root, hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_input: { file_path: join(root, 'src/a.js') } }), root);
+  saveWith(root, '.phaseproof/reviews/phase-01-code.md', FAIL);
+  utimesSync(join(root, '.phaseproof/reviews/phase-01-code.md'), second, second);
+  assert.doesNotMatch(context(root), /edited after this review/);
 });
